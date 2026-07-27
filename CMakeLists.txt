@@ -45,11 +45,22 @@ target_link_directories(${CMAKE_PROJECT_NAME} PRIVATE
 # Add sources to executable
 target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user sources here
+    # App (Application Layer - Software Components)
+    App/LedBlink/Src/LedBlink.c
+    # Rte (Runtime Environment)
+    Rte/Src/Rte_LedBlink.c
+    # Bsw (Basic Software)
+    Bsw/ServiceLayer/Os/Src/Os.c
+    Bsw/EcuAbstraction/LedDriver/Src/LedDriver.c
 )
 
 # Add include paths
 target_include_directories(${CMAKE_PROJECT_NAME} PRIVATE
     # Add user defined include paths
+    App/LedBlink/Inc
+    Rte/Inc
+    Bsw/ServiceLayer/Os/Inc
+    Bsw/EcuAbstraction/LedDriver/Inc
 )
 
 # Add project symbols (macros)

@@ -21,7 +21,9 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-
+#include "LedDriver.h"
+#include "LedBlink.h"
+#include "Os.h"
 /* USER CODE END Includes */
 
 /* Private typedef -----------------------------------------------------------*/
@@ -87,7 +89,12 @@ int main(void)
   /* Initialize all configured peripherals */
   MX_GPIO_Init();
   /* USER CODE BEGIN 2 */
-
+  /* Bsw/EcuAbstraction init */
+  LedDriver_Init();
+  /* App (SWC) init */
+  LedBlink_Init();
+  /* Bsw/ServiceLayer (scheduler) init */
+  Os_Init();
   /* USER CODE END 2 */
 
   /* Infinite loop */
@@ -97,8 +104,7 @@ int main(void)
     /* USER CODE END WHILE */
 
     /* USER CODE BEGIN 3 */
-    HAL_GPIO_TogglePin(GPIOA, GPIO_PIN_6);
-    HAL_Delay(500);
+    Os_Schedule();
   }
   /* USER CODE END 3 */
 }

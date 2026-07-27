@@ -21,7 +21,12 @@
       "Bash(cp \"C:\\\\Users\\\\Administrator/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/gcc/startup_stm32f411xe.s\" \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\startup_stm32f411xe.s\")",
       "Bash(rm \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\Drivers\\\\CMSIS\\\\Device\\\\ST\\\\STM32F4xx\\\\Include\\\\stm32f401xe.h\" \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\startup_stm32f401xe.s\")",
       "Bash(mv \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\STM32F401xx_FLASH.ld\" \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\STM32F411xx_FLASH.ld\")",
-      "Bash(gh auth *)"
+      "Bash(gh auth *)",
+      "Bash(cmake --preset Debug)",
+      "PowerShell(Get-Command *)",
+      "Read(//c/Users/Administrator/**)",
+      "Read(//c//**)",
+      "Read(//c/Program Files/**)"
     ]
   }
 }
