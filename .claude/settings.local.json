@@ -1,0 +1,27 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(sleep 5; cat /c/Users/Administrator/AppData/Local/Temp/claude/d--Workplace-STM32F4-LED-BLINK/5847a9c6-98d4-4190-8f1f-86113dba5d8c/tasks/b163i75bk.output 2>&1)",
+      "Read(//c/Users/Administrator/AppData/Local/Temp/claude/d--Workplace-STM32F4-LED-BLINK/5847a9c6-98d4-4190-8f1f-86113dba5d8c/tasks/**)",
+      "Bash(gh api *)",
+      "WebFetch(domain:github.com)",
+      "WebFetch(domain:api.github.com)",
+      "WebFetch(domain:raw.githubusercontent.com)",
+      "Bash(git *)",
+      "Bash(gh --version)",
+      "WebFetch(domain:www.npmjs.com)",
+      "WebFetch(domain:registry.npmjs.org)",
+      "Read(//c/Users/Administrator/.claude/skills/**)",
+      "Read(//c/Users/Administrator/.claude/**)",
+      "Bash(claude plugin *)",
+      "Bash(gh repo *)",
+      "Bash(npm install *)",
+      "Bash(claude *)",
+      "Bash(cp \"C:\\\\Users\\\\Administrator/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Device/ST/STM32F4xx/Include/stm32f411xe.h\" \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\Drivers\\\\CMSIS\\\\Device\\\\ST\\\\STM32F4xx\\\\Include\\\\stm32f411xe.h\")",
+      "Bash(cp \"C:\\\\Users\\\\Administrator/STM32Cube/Repository/STM32Cube_FW_F4_V1.28.3/Drivers/CMSIS/Device/ST/STM32F4xx/Source/Templates/gcc/startup_stm32f411xe.s\" \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\startup_stm32f411xe.s\")",
+      "Bash(rm \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\Drivers\\\\CMSIS\\\\Device\\\\ST\\\\STM32F4xx\\\\Include\\\\stm32f401xe.h\" \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\startup_stm32f401xe.s\")",
+      "Bash(mv \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\STM32F401xx_FLASH.ld\" \"D:\\\\Workplace\\\\STM32F4\\\\LED_BLINK\\\\STM32F411xx_FLASH.ld\")",
+      "Bash(gh auth *)"
+    ]
+  }
+}
