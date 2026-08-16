@@ -302,6 +302,10 @@ Vào **Settings → Actions → General** của repo trên GitHub, kiểm tra 2 
 
 ## 9. Self-hosted Runner — build ngay trên máy local (dùng cho license dạng USB dongle)
 
+> Toàn bộ mục 9 (9.1–9.8) viết cho máy runner chạy **Windows**. Nếu máy có
+> dongle/cần build local lại là **Linux**, xem riêng **mục 11** ở cuối tài
+> liệu — các khái niệm nền tảng vẫn giống nhau, chỉ khác công cụ hệ điều hành.
+
 ### 9.1. Vì sao cần self-hosted runner
 
 Máy ảo (`ubuntu-latest`) của GitHub chạy trên cloud, **không thể truy cập USB
@@ -743,3 +747,186 @@ lại hoàn toàn theo đúng toolchain thật của project đó.
   không cần làm lại — các setting này ở cấp **Machine**, dùng chung được cho
   mọi repo/runner cài trên máy. Nếu là **máy khác**, phải làm lại toàn bộ
   mục 9.2–9.3, và có khả năng gặp lại đúng 2 lỗi đã ghi ở mục 9.5–9.6.
+
+## 11. Setup self-hosted runner trên Linux (thay vì Windows)
+
+Toàn bộ mục 9 ở trên viết cho máy runner chạy **Windows** (PowerShell,
+Windows Service, `icacls`...). Nếu máy có USB dongle (hoặc máy build local)
+lại là **Linux** (Ubuntu/Debian...), cách làm tương tự nhưng công cụ hệ điều
+hành khác hẳn. Mục này liệt kê đúng những điểm khác biệt, viết cho người
+chưa quen Linux service cũng làm theo được.
+
+### 11.1. Khác biệt cốt lõi so với Windows — vì sao không gặp lại y hệt các lỗi ở mục 9.5/9.6
+
+| Chủ đề | Windows | Linux |
+|---|---|---|
+| Shell chạy từng bước `run:` | PowerShell (`.ps1`, cần khai báo `shell: powershell`) | **Bash** theo mặc định, không cần khai báo `shell:` |
+| Chặn chạy script kiểu "Execution Policy" (mục 9.5) | Có — `Restricted` chặn mọi `.ps1` | **Không có khái niệm tương đương** — Bash không có execution-policy. Runner tự `chmod +x` file `.sh` tạm nó tạo ra trước khi chạy, nên bước này thường không gặp lỗi tương tự |
+| PATH tách theo scope (Machine/User) (mục 9.2) | Có, phải sửa PATH cấp Machine | Không tách — nhưng service `systemd` **không đọc `~/.bashrc`/`~/.profile`** của user, nên vẫn phải khai báo PATH ở nơi service thấy được (xem mục 11.2) |
+| Cache PATH/quyền vào access token lúc service khởi động (mục 9.6) | Có | **Vẫn có** — `systemd` cũng chỉ nạp môi trường 1 lần lúc service start; đổi `PATH`/quyền xong vẫn phải `systemctl restart` lại service runner, y hệt tinh thần mục 9.6 |
+
+Tóm lại: Linux **tránh được** hẳn 1 lớp lỗi (Execution Policy), nhưng **vẫn có** lớp lỗi còn lại (service cache môi trường lúc start) — đừng chủ quan bỏ qua bước restart service sau khi đổi PATH/quyền.
+
+### 11.2. Cài toolchain build trên máy Linux
+
+Cách nhanh nhất — dùng trình quản lý gói có sẵn (ví dụ Ubuntu/Debian):
+
+```bash
+sudo apt update
+sudo apt install -y cmake ninja-build gcc-arm-none-eabi
+```
+
+Kiểm tra:
+```bash
+cmake --version
+ninja --version
+arm-none-eabi-gcc --version
+```
+
+> Bản `gcc-arm-none-eabi` trong kho `apt` mặc định của Ubuntu thường là bản
+> khá cũ. Nếu cần đúng phiên bản mới (ví dụ để khớp bản đang dùng trên
+> Windows ở mục 9.2), tải thẳng gói `.tar.xz` từ
+> [developer.arm.com/downloads/-/arm-gnu-toolchain-downloads](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads),
+> giải nén vào `/opt/arm-gnu-toolchain`, rồi thêm `bin` của nó vào PATH như
+> hướng dẫn ngay dưới đây.
+
+**Thêm vào PATH cho toàn hệ thống** (tương đương PATH cấp Machine trên
+Windows) — tạo 1 file trong `/etc/profile.d/`, áp dụng cho mọi user kể cả
+user chạy service runner:
+
+```bash
+echo 'export PATH="$PATH:/opt/arm-gnu-toolchain/bin"' | sudo tee /etc/profile.d/arm-toolchain.sh
+sudo chmod +x /etc/profile.d/arm-toolchain.sh
+```
+
+> Nếu cài bằng `apt` như trên, `cmake`/`ninja`/`arm-none-eabi-gcc` đã tự nằm
+> ở `/usr/bin` (vốn đã có sẵn trong PATH mặc định của mọi user/service) —
+> bước thêm PATH thủ công này chỉ cần khi tự giải nén toolchain vào 1 thư
+> mục tùy ý như `/opt/...`.
+
+### 11.3. Cài GitHub Actions Runner làm `systemd` service trên Linux
+
+**Bước 1 — Lấy URL đăng ký + token**: làm y hệt mục 9.3 Bước 1 (vào
+**Settings → Actions → Runners → New self-hosted runner**, chọn OS **Linux**
+thay vì Windows, lấy token sau `--token`).
+
+**Bước 2 — Tải, giải nén, đăng ký runner:**
+
+```bash
+mkdir -p ~/actions-runner && cd ~/actions-runner
+
+curl -o actions-runner-linux-x64.tar.gz -L \
+  https://github.com/actions/runner/releases/download/v2.336.0/actions-runner-linux-x64-2.336.0.tar.gz
+tar xzf actions-runner-linux-x64.tar.gz
+
+./config.sh --url "https://github.com/<owner>/<repo>" --token "<TOKEN_LẤY_Ở_BƯỚC_1>" \
+  --name "stm32-linux-runner" --labels "stm32-local-linux" --work "_work" --unattended
+```
+> Bản mới hơn: xem [github.com/actions/runner/releases](https://github.com/actions/runner/releases)
+> và sửa lại số version + tên file cho khớp, giống ghi chú ở mục 9.3.
+
+**Bước 3 — Cài làm service để chạy nền, tự khởi động lại cùng máy:**
+
+```bash
+sudo ./svc.sh install
+sudo ./svc.sh start
+```
+
+**Bước 4 — Xác nhận runner đang hoạt động:**
+
+```bash
+sudo ./svc.sh status
+```
+Phải thấy dòng dạng `active (running)`. Trên GitHub, vào lại
+**Settings → Actions → Runners** sẽ thấy runner hiện chấm tròn **xanh (Idle)**.
+
+### 11.4. Thêm job self-hosted cho Linux vào `build.yml`
+
+Vì job `build-self-hosted` hiện tại khai báo cứng `shell: powershell` và
+dùng cú pháp PowerShell (`Get-ChildItem`, `-replace`...) trong các step —
+**không chạy được trên Linux runner**. Cần thêm 1 job **riêng** cho Linux,
+dùng label khác (`stm32-local-linux` ở ví dụ Bước 2 trên) để job cũ (Windows)
+và job mới (Linux) không bị gán nhầm máy:
+
+```yaml
+build-self-hosted-linux:
+  name: Build on local Linux runner (${{ matrix.preset }})
+  runs-on: [self-hosted, stm32-local-linux]
+  if: >
+    github.event_name == 'pull_request' ||
+    github.event_name == 'workflow_dispatch' ||
+    (github.event_name == 'push' && contains(github.event.head_commit.message, '[build]'))
+  strategy:
+    fail-fast: false
+    matrix:
+      preset: [Debug, Release]
+
+  steps:
+    - name: Checkout repository
+      uses: actions/checkout@v4
+
+    - name: Verify local toolchain is on PATH
+      run: |
+        cmake --version
+        ninja --version
+        arm-none-eabi-gcc --version
+
+    - name: Configure (${{ matrix.preset }})
+      run: cmake --preset ${{ matrix.preset }}
+
+    - name: Build (${{ matrix.preset }})
+      run: cmake --build --preset ${{ matrix.preset }}
+
+    - name: Generate .hex / .bin
+      working-directory: build/${{ matrix.preset }}
+      run: |
+        ELF=$(find . -maxdepth 1 -name '*.elf' | head -n1)
+        arm-none-eabi-objcopy -O ihex "$ELF" "${ELF%.elf}.hex"
+        arm-none-eabi-objcopy -O binary "$ELF" "${ELF%.elf}.bin"
+
+    - name: Print firmware size
+      working-directory: build/${{ matrix.preset }}
+      run: |
+        ELF=$(find . -maxdepth 1 -name '*.elf' | head -n1)
+        arm-none-eabi-size "$ELF"
+
+    - name: Upload build artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: stm32f4-${{ matrix.preset }}-local-linux
+        path: |
+          build/${{ matrix.preset }}/*.elf
+          build/${{ matrix.preset }}/*.hex
+          build/${{ matrix.preset }}/*.bin
+          build/${{ matrix.preset }}/*.map
+        if-no-files-found: error
+        retention-days: 14
+```
+
+Điểm khác so với bản Windows: không cần khối `defaults: run: shell:`
+(Bash là mặc định), và bước "Generate .hex / .bin"/"Print firmware size"
+dùng lại đúng cú pháp Bash (`find`, `${ELF%.elf}`) giống hệt job `build`
+chạy trên cloud ở mục 4.5 — vì cloud runner (`ubuntu-latest`) vốn cũng là
+Linux.
+
+### 11.5. Lỗi thường gặp riêng trên Linux
+
+| Hiện tượng | Nguyên nhân | Cách xử lý |
+|---|---|---|
+| Job fail ở step đầu tiên với `Permission denied` khi chạy file script tạm | Thư mục chứa `_work/_temp` (hoặc `/tmp`) được mount với tùy chọn `noexec` (chặn thực thi file trong phân vùng đó) — khá phổ biến trên máy được hardening bảo mật | Kiểm tra bằng `mount \| grep $(df --output=target ~/actions-runner/_work \| tail -1)`, nếu thấy `noexec` trong danh sách option, đổi runner sang thư mục nằm trên phân vùng không có `noexec` (thường là `/home` hoặc `/opt`) |
+| Đổi PATH/quyền xong (mục 11.2) mà job vẫn không thấy `cmake`/`gcc` | Giống hệt tinh thần mục 9.6 — `systemd` chỉ nạp môi trường 1 lần lúc service start | `sudo systemctl restart actions.runner.<owner>-<repo>.<name>.service` |
+| `./svc.sh install` báo lỗi thiếu quyền | Cần chạy bằng `sudo` vì thao tác tạo `systemd` service yêu cầu quyền root | Thêm `sudo` trước `./svc.sh install` và `./svc.sh start` |
+| Runner hiện `Offline` trên GitHub dù service `active (running)` | Máy không ra được Internet (firewall/proxy chặn outbound tới `github.com`/`*.actions.githubusercontent.com`) | Kiểm tra bằng `curl -I https://github.com`, mở firewall outbound nếu bị chặn — runner chỉ cần kết nối **ra ngoài**, không cần mở port inbound |
+
+### 11.6. Bảo mật (bổ sung riêng cho Linux)
+
+Áp dụng toàn bộ lưu ý ở mục 9.7, cộng thêm:
+
+- Không cài/chạy runner dưới user `root`. Tạo 1 user riêng (ví dụ `ghrunner`)
+  chỉ có đúng quyền cần thiết để cài + chạy runner, tránh trường hợp code
+  trong workflow (chạy dưới quyền user này) vô tình/cố ý phá hỏng hệ thống.
+- Nếu dùng GHS dongle trên Linux, driver dongle (Sentinel HASP bản Linux)
+  thường yêu cầu cấu hình thêm `udev rule` để user không phải `root` truy
+  cập được thiết bị USB — tương tự khái niệm ACL trên Windows ở mục 9.8.2,
+  nhưng cơ chế cấp quyền trên Linux là qua group (`plugdev` hoặc group
+  riêng) + `udev`, không phải `icacls`.
