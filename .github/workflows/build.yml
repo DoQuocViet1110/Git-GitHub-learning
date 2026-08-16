@@ -94,6 +94,15 @@ jobs:
 
       - name: Verify local toolchain is on PATH
         run: |
+          $diag = "C:\Windows\Temp\ci-diag.txt"
+          "PATH=$env:PATH" | Out-File -FilePath $diag
+          "whoami=$(whoami)" | Out-File -Append $diag
+          "cmake cmd: $((Get-Command cmake -ErrorAction SilentlyContinue).Source)" | Out-File -Append $diag
+          "ninja cmd: $((Get-Command ninja -ErrorAction SilentlyContinue).Source)" | Out-File -Append $diag
+          "gcc cmd: $((Get-Command arm-none-eabi-gcc -ErrorAction SilentlyContinue).Source)" | Out-File -Append $diag
+          try { cmake --version 2>&1 | Out-File -Append $diag } catch { "cmake error: $_" | Out-File -Append $diag }
+          try { ninja --version 2>&1 | Out-File -Append $diag } catch { "ninja error: $_" | Out-File -Append $diag }
+          try { arm-none-eabi-gcc --version 2>&1 | Out-File -Append $diag } catch { "gcc error: $_" | Out-File -Append $diag }
           cmake --version
           ninja --version
           arm-none-eabi-gcc --version
