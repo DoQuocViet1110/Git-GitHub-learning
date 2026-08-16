@@ -694,3 +694,52 @@ strategy:
   (single point of failure) cho việc build bằng GHS.
 - Không thể chạy build GHS song song trên máy runner thứ 2 trừ khi mua thêm
   dongle/license riêng — khác với ARM GCC (miễn phí, không giới hạn số máy).
+
+## 10. Đem setup này sang 1 repo khác
+
+Muốn dựng lại đúng pipeline này (cloud build + self-hosted runner) cho 1 repo
+khác, cần phân biệt rõ 2 nhóm: **file có thể copy sang** và **phần phải làm
+lại thủ công trên máy** (không nằm trong file nào cả).
+
+### 10.1. File cần copy sang repo mới
+
+| File | Copy nguyên hay phải sửa? |
+|---|---|
+| `.github/workflows/build.yml` | **Phải sửa** — dùng làm template, không copy y nguyên được |
+| `doc/GithubActions/GithubActions_Setup.md` (chính file này) | Copy làm tài liệu tham khảo, sửa lại vài chỗ có tên project/file cụ thể (STM32F4, `.elf`...) |
+| `.github/copilot-instructions.md` | Copy được luôn nếu repo mới cũng là project nhúng — chỉ cần điền lại phần "Project context" ở đầu file cho đúng MCU/board mới |
+
+**Không cần đem theo**: `.claude/settings.local.json` — đây chỉ là quyền tool
+cục bộ của Claude Code cho thư mục làm việc hiện tại, không liên quan gì tới
+CI/CD của repo, đừng copy sang.
+
+### 10.2. Trong `build.yml` cần sửa những gì
+
+Nếu repo mới **cũng là project CMake + ARM GCC** (giống STM32F4 này): chỉ
+cần đổi:
+
+- `matrix: preset: [Debug, Release]` → đúng tên preset trong `CMakePresets.json`
+  của repo mới.
+- Đường dẫn artifact (`build/${{ matrix.preset }}/*.elf`...) → đúng cấu trúc
+  thư mục build của repo mới.
+- `runs-on: [self-hosted, stm32-local]` → đổi label nếu máy/label runner khác.
+
+Nếu repo mới **khác hệ** (không phải CMake/ARM GCC): chỉ giữ lại phần khung
+(`on:`, điều kiện `if:` dùng tag `[build]`, `matrix`, job self-hosted có
+`shell: powershell`), còn các step Configure/Build/Generate `.hex` phải viết
+lại hoàn toàn theo đúng toolchain thật của project đó.
+
+### 10.3. Phần KHÔNG nằm trong file, phải làm lại thủ công trên máy
+
+- **Runner self-hosted**: 1 runner = đăng ký cho **đúng 1 repo** (hoặc 1 org).
+  Muốn repo mới cũng build local được, phải chạy lại `config.cmd` **với
+  token mới** lấy từ chính repo mới (Settings → Actions → Runners → New
+  self-hosted runner) — không dùng chung token/registration của repo cũ.
+  Có thể cài thêm 1 instance runner riêng (thư mục khác, ví dụ
+  `C:\actions-runner-<repo-moi>`) trên **cùng máy** nếu muốn cả 2 repo cùng
+  build local song song, không xung đột nhau.
+- **Toolchain (`cmake`/`ninja`/`arm-none-eabi-gcc`) + Execution Policy
+  `RemoteSigned`** (xem mục 9.2 và 9.5): nếu setup trên **cùng máy này**,
+  không cần làm lại — các setting này ở cấp **Machine**, dùng chung được cho
+  mọi repo/runner cài trên máy. Nếu là **máy khác**, phải làm lại toàn bộ
+  mục 9.2–9.3, và có khả năng gặp lại đúng 2 lỗi đã ghi ở mục 9.5–9.6.
