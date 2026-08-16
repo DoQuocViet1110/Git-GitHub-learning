@@ -297,8 +297,8 @@ Vào **Settings → Actions → General** của repo trên GitHub, kiểm tra 2 
 | Job đỏ ở bước "Build" | Code có lỗi compile thật sự | Đọc log lỗi, sửa code y hệt như build lỗi trên máy local |
 | Không thấy mục Artifacts sau khi job xanh | Job vẫn chưa chạy xong hoàn toàn, hoặc `if-no-files-found: error` báo không tìm thấy file `.elf` | Kiểm tra bước Build có sinh đúng file `.elf` trong `build/<preset>/` không |
 | Job **self-hosted** đỏ ngay bước đầu tiên: `Error: pwsh: command not found` | `build.yml` khai báo `shell: pwsh` (PowerShell 7/Core), nhưng máy runner chỉ cài sẵn **Windows PowerShell 5.1** (`powershell.exe`) — Windows không tự có `pwsh.exe` | Đổi `shell: pwsh` thành `shell: powershell` trong `defaults.run` của job `build-self-hosted` (cú pháp PowerShell dùng trong các step này tương thích cả 2 bản), hoặc cài PowerShell 7 trên máy runner rồi giữ nguyên `pwsh` |
-| Job **self-hosted** vẫn đỏ ở bước "Verify local toolchain is on PATH" **dù `cmake`/`ninja`/`arm-none-eabi-gcc` chạy tay bình thường**, không có thông báo lỗi rõ ràng trong log (job fail rất nhanh, ~2 giây) | **PowerShell Execution Policy** ở scope `LocalMachine` đang là `Undefined` (mặc định fallback về `Restricted`, chặn chạy mọi file `.ps1`). Mỗi bước `run:` trong workflow được GitHub Actions runner ghi ra 1 file `.ps1` tạm rồi dot-source (`. 'script.ps1'`) để chạy — dưới `Restricted`, thao tác này bị chặn ngay từ đầu, trước cả khi kịp gọi `cmake`/`ninja`/`gcc`. Đặt `RemoteSigned` ở `CurrentUser` (qua PowerShell thường) **không** đủ, vì service chạy dưới tài khoản `NT AUTHORITY\NETWORK SERVICE` có hive registry riêng, không thấy được `CurrentUser` của tài khoản đăng nhập | Mở PowerShell **as Administrator**, chạy lệnh sau (áp dụng toàn máy, mọi tài khoản kể cả `NETWORK SERVICE`):<br>`Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned -Force`<br>Không cần restart service sau khi đổi — Execution Policy được đọc lại mỗi lần PowerShell khởi động process mới, không bị cache như PATH/group membership. Kiểm tra lại bằng `Get-ExecutionPolicy -List`, cột `LocalMachine` phải là `RemoteSigned`. |
-| Đổi PATH cấp Machine hoặc quyền group cho `NETWORK SERVICE` xong nhưng job vẫn lỗi y hệt lỗi cũ | Windows chỉ nạp **PATH** và **group membership vào access token** tại thời điểm service *khởi động (logon)* — service đang chạy sẵn sẽ không tự thấy thay đổi | Restart lại chính service runner để nó tạo phiên logon mới, nạp lại PATH/token mới nhất:<br>`Restart-Service -Name "actions.runner.<owner>-<repo>.<name>"` |
+| Job **self-hosted** vẫn đỏ ở bước "Verify local toolchain is on PATH" **dù `cmake`/`ninja`/`arm-none-eabi-gcc` chạy tay bình thường**, fail rất nhanh (~1-2 giây), log không rõ lỗi gì | **PowerShell Execution Policy** ở scope `LocalMachine` đang là `Undefined`/`Restricted`, chặn chạy mọi file `.ps1` mà runner tự tạo ra cho từng bước `run:` — xem giải thích đầy đủ + cách kiểm tra + cách sửa ở **mục 9.5** bên dưới | `Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned -Force` (PowerShell as Administrator) |
+| Đổi PATH cấp Machine hoặc quyền group cho `NETWORK SERVICE` xong nhưng job vẫn lỗi y hệt lỗi cũ | Windows chỉ nạp **PATH** và **group membership vào access token** tại thời điểm service *khởi động (logon)* — service đang chạy sẵn sẽ không tự thấy thay đổi — xem giải thích đầy đủ + cách kiểm tra ở **mục 9.6** bên dưới | Restart lại chính service runner: `Restart-Service -Name "actions.runner.<owner>-<repo>.<name>"` |
 
 ## 9. Self-hosted Runner — build ngay trên máy local (dùng cho license dạng USB dongle)
 
@@ -318,7 +318,7 @@ sau này công ty có nhiều máy).
 
 > Hiện tại job này đang dùng tạm `arm-none-eabi-gcc`/`cmake`/`ninja` (giống
 > job cloud) để test luồng self-hosted trước. Khi chuyển sang GHS thật, xem
-> hướng dẫn chi tiết ở mục 9.6 bên dưới.
+> hướng dẫn chi tiết ở mục 9.8 bên dưới.
 
 ### 9.2. Cài toolchain build độc lập trên máy runner
 
@@ -474,7 +474,115 @@ Restart-Service -Name "actions.runner.<owner>-<repo>.<runner-name>"
 Sau đó service sẽ chuyển sang `Running` và log hiện dòng
 `Listening for Jobs` — runner đã sẵn sàng nhận job.
 
-### 9.5. Lưu ý bảo mật
+### 9.5. Nếu job self-hosted lỗi ngay bước đầu tiên có chạy lệnh, fail rất nhanh (~1-2 giây), không rõ lý do
+
+**Triệu chứng** — nhận diện đúng lỗi này trước khi làm gì khác:
+
+- Bước "Checkout repository" chạy xong bình thường (dấu tick xanh).
+- Bước kế tiếp — bước **đầu tiên có chứa `run:`** (ví dụ "Verify local toolchain is on PATH") — báo đỏ (fail) chỉ sau khoảng 1-2 giây. Quá nhanh để là lỗi build/compile thật sự (build thật luôn mất ít nhất vài giây tới vài chục giây).
+- Nếu bạn tự mở 1 cửa sổ PowerShell bình thường trên chính máy đó và gõ tay đúng những lệnh trong bước bị lỗi (ví dụ `cmake --version`), lệnh chạy **hoàn toàn bình thường**, không báo lỗi gì.
+- Log của step lỗi trong GitHub Actions thường chỉ có 1 dòng ngắn gọn `Process completed with exit code 1.`, không có thông báo lỗi chi tiết nào khác.
+
+Sự kết hợp "chạy tay OK nhưng CI vẫn fail, fail cực nhanh, log không rõ ràng" là dấu hiệu đặc trưng của lỗi này — nguyên nhân **không nằm ở toolchain** (`cmake`/`ninja`/`gcc`) mà nằm ở việc Windows đang chặn không cho chạy **bất kỳ file script `.ps1` nào**, ngay trước cả khi kịp gọi đến toolchain.
+
+**Vì sao lại xảy ra — giải thích từ đầu cho người chưa biết PowerShell Execution Policy là gì:**
+
+Mỗi khi workflow chạy tới 1 bước có `run: |` (một hoặc nhiều dòng lệnh PowerShell), GitHub Actions runner **không gõ lệnh trực tiếp vào cửa sổ console** như bạn tự làm — nó âm thầm làm 2 việc:
+
+1. Ghi toàn bộ nội dung của `run:` đó ra **1 file tạm đuôi `.ps1`** (nằm trong `...\actions-runner\_work\_temp\`).
+2. Gọi PowerShell để **chạy file `.ps1` đó** bằng kỹ thuật gọi là "dot-source": `. 'đường-dẫn-file.ps1'`.
+
+Windows có sẵn 1 cơ chế bảo mật tên là **Execution Policy** (chính sách thực thi script), quyết định file `.ps1` có được phép chạy hay không (điều này KHÔNG áp dụng cho việc gõ lệnh trực tiếp vào console — đó là lý do tự gõ tay thì chạy được bình thường). Vài mức hay gặp:
+
+| Execution Policy | Ý nghĩa |
+|---|---|
+| `Restricted` | Mức mặc định gốc của Windows. **Không cho chạy bất kỳ file `.ps1` nào**, kể cả file do chính máy tự tạo ra. |
+| `RemoteSigned` | Cho chạy mọi file `.ps1` được tạo ra **trên chính máy đó** (không tải từ Internet về) mà không cần chữ ký số — đúng nhu cầu của máy chạy CI/CD tự sinh script. |
+
+Windows lưu Execution Policy theo **4 phạm vi (scope)** tách biệt nhau, xem bằng lệnh:
+
+```powershell
+Get-ExecutionPolicy -List
+```
+
+Máy đang gặp lỗi này thường cho kết quả dạng:
+
+```
+        Scope ExecutionPolicy
+        ----- ---------------
+MachinePolicy       Undefined
+   UserPolicy       Undefined
+      Process          Bypass
+  CurrentUser    RemoteSigned
+ LocalMachine       Undefined
+```
+
+Điểm mấu chốt gây nhầm lẫn: dòng `CurrentUser` có thể đã là `RemoteSigned` (vì trước đây bạn từng tự đổi nó khi cài đặt máy dưới tài khoản của mình) — khiến bạn tưởng script đã được phép chạy. Nhưng dòng `LocalMachine` lại đang là `Undefined`, và khi `LocalMachine` là `Undefined`, Windows sẽ áp dụng mặc định gốc là `Restricted`.
+
+Vấn đề nằm ở chỗ: Windows Service chạy runner (`actions.runner.*`, xem mục 9.3) **không chạy dưới tài khoản Windows mà bạn đang đăng nhập** — mặc định nó chạy dưới 1 tài khoản hệ thống riêng tên là `NT AUTHORITY\NETWORK SERVICE`. Tài khoản này có "hồ sơ" (registry hive) hoàn toàn tách biệt với tài khoản bạn dùng để mở PowerShell hằng ngày, nên **setting `CurrentUser: RemoteSigned` bạn từng đổi không có tác dụng gì với nó**. `NETWORK SERVICE` chỉ nhìn thấy scope `LocalMachine` (áp dụng chung cho toàn máy, mọi tài khoản) — và scope đó đang là `Restricted` → mọi file `.ps1` mà runner tạo ra để chạy từng bước `run:` đều bị chặn ngay từ dòng lệnh đầu tiên, trước cả khi kịp gọi tới `cmake`/`ninja`/`gcc`.
+
+**Cách kiểm tra — xác nhận đúng là lỗi này trước khi sửa:**
+
+1. Mở PowerShell (không cần quyền Administrator) ngay trên máy đang chạy runner.
+2. Gõ:
+   ```powershell
+   Get-ExecutionPolicy -List
+   ```
+3. Nhìn đúng dòng `LocalMachine` — nếu giá trị là `Undefined` hoặc `Restricted`, gần như chắc chắn đây chính là nguyên nhân.
+
+**Cách sửa:**
+
+1. Mở **PowerShell với quyền Administrator** (chuột phải vào biểu tượng PowerShell → "Run as administrator").
+2. Chạy đúng 1 lệnh sau:
+   ```powershell
+   Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned -Force
+   ```
+   - `-Scope LocalMachine`: bắt buộc phải dùng đúng scope này (không phải `CurrentUser`) — đây là scope áp dụng cho **toàn bộ máy**, mọi tài khoản, kể cả `NETWORK SERVICE`.
+   - `RemoteSigned`: đủ an toàn (vẫn chặn script tải từ Internet về mà chưa có chữ ký số) trong khi cho phép chạy các script do chính máy tự sinh ra — đúng trường hợp GitHub Actions runner.
+   - `-Force`: bỏ qua câu hỏi xác nhận "Are you sure you want to change the execution policy?".
+3. Chạy lại `Get-ExecutionPolicy -List` để xác nhận cột `LocalMachine` giờ đã hiện `RemoteSigned`.
+
+> **Không cần** khởi động lại (restart) service runner sau bước này. Execution Policy được Windows đọc lại **mỗi lần có 1 tiến trình PowerShell mới được tạo ra** (mỗi job/step CI đều là 1 tiến trình PowerShell mới) — khác với PATH và quyền group, vốn bị "đóng băng" theo vòng đời của service (xem mục 9.6 ngay dưới đây).
+
+4. Trigger lại workflow (push 1 commit có chứa `[build]` trong message, hoặc vào tab Actions bấm "Run workflow") để xác nhận job self-hosted giờ đã chạy qua được bước đầu tiên.
+
+### 9.6. Vừa đổi PATH cấp Machine / cấp thêm quyền cho NETWORK SERVICE xong nhưng job vẫn lỗi y hệt lỗi cũ
+
+**Triệu chứng**: Bạn đã làm đúng các bước ở mục 9.2 (thêm PATH cấp Machine) hoặc vừa cấp thêm quyền NTFS (`icacls`) cho tài khoản/nhóm chạy runner, tự kiểm tra bằng `[Environment]::GetEnvironmentVariable(...)` hay `icacls` đều thấy thay đổi đã áp dụng đúng — nhưng chạy lại workflow thì job self-hosted **vẫn báo lỗi giống hệt như trước khi sửa** (ví dụ vẫn "not recognized"/không tìm thấy `cmake`, hoặc vẫn "Access is denied").
+
+**Vì sao lại xảy ra — giải thích từ đầu cho người chưa biết "access token" của Windows là gì:**
+
+Khi 1 Windows Service (như service chạy runner) khởi động, Windows tạo cho tiến trình đó 1 thứ gọi là **access token** — hiểu đơn giản như 1 "vé thông hành" được cấp đúng 1 lần tại thời điểm khởi động, trong đó ghi sẵn: tiến trình này chạy dưới tài khoản nào, tài khoản đó thuộc những nhóm (group) quyền nào, và **giá trị PATH cấp Machine tại đúng thời điểm đó**. Vé này được giữ nguyên suốt vòng đời của tiến trình — Windows **không tự động cấp lại vé mới** dù sau đó bạn có đổi PATH hay thêm tài khoản vào nhóm quyền khác.
+
+Nói cách khác: nếu bạn đổi PATH hoặc quyền **sau khi** service đã khởi động, service đó (dù `Status` vẫn hiện `Running` bình thường, trông như không có gì bất thường) **vẫn đang dùng PATH/quyền phiên bản cũ** — thay đổi mới chỉ thật sự có hiệu lực từ **lần khởi động tiếp theo** của service.
+
+**Cách kiểm tra** — xem service đã chạy từ lúc nào, so với lúc bạn thực hiện thay đổi:
+
+```powershell
+$svc = Get-CimInstance Win32_Service -Filter "Name LIKE 'actions.runner%'"
+(Get-Process -Id $svc.ProcessId).StartTime
+```
+
+Nếu thời điểm in ra **sớm hơn** thời điểm bạn chạy lệnh đổi PATH (mục 9.2) hoặc lệnh `icacls` cấp quyền, thì đúng là cần restart lại service.
+
+**Cách sửa** — restart lại chính service runner để nó khởi động lại và được cấp vé thông hành mới:
+
+```powershell
+# Xem đúng tên service (cột Name) trước
+Get-Service "actions.runner.*" | Select-Object Name
+
+# Restart, thay đúng tên lấy được ở lệnh trên
+Restart-Service -Name "actions.runner.<owner>-<repo>.<runner-name>" -Confirm:$false
+```
+
+Kiểm tra lại service đã `Running`:
+```powershell
+Get-Service "actions.runner.*" | Select-Object Name, Status, StartType
+```
+
+> **Lưu ý**: đây chính là lý do thứ tự các bước ở mục 9.2 → 9.3 trong tài liệu này luôn khuyến nghị **cài đặt/cấp quyền toolchain xong trước, rồi mới cài & khởi động runner service** — tránh hẳn việc phải nhớ restart lại sau này. Nếu về sau bạn cần đổi PATH hoặc cấp thêm quyền trong lúc runner đã chạy sẵn từ trước (ví dụ khi chuyển sang cài GHS ở mục 9.8), hãy luôn nhớ restart service ngay sau đó bằng lệnh trên.
+
+### 9.7. Lưu ý bảo mật
 
 - Self-hosted runner chạy **bất kỳ code nào** trong workflow của repo — chỉ
   dùng cho repo **private/nội bộ**, tránh dùng cho repo public có PR từ
@@ -484,14 +592,14 @@ Sau đó service sẽ chuyển sang `Running` và log hiện dòng
 - Máy chạy runner cần **luôn bật** để nhận job (service tự khởi động lại
   cùng Windows nhờ `StartType: Automatic`).
 
-### 9.6. Chuyển sang dùng trình biên dịch GHS (Green Hills Software) qua license USB dongle
+### 9.8. Chuyển sang dùng trình biên dịch GHS (Green Hills Software) qua license USB dongle
 
 Mục 9.1–9.5 ở trên đã dựng xong hạ tầng self-hosted runner (máy có thể tự
 chạy job ngay tại chỗ, truy cập được phần cứng cắm trực tiếp vào máy —
 bao gồm USB dongle license). Phần này hướng dẫn thay trình biên dịch đang
 dùng tạm (ARM GCC) bằng GHS thật.
 
-**9.6.1. Vì sao chỉ self-hosted runner mới dùng được GHS dongle**
+**9.8.1. Vì sao chỉ self-hosted runner mới dùng được GHS dongle**
 
 License GHS dạng USB dongle (thường dùng driver Sentinel/SafeNet HASP) chỉ
 được phần mềm GHS "nhìn thấy" khi đồng thời thỏa 2 điều kiện:
@@ -503,7 +611,7 @@ Máy ảo cloud (`ubuntu-latest`) không thể đáp ứng cả 2 điều kiện
 đây chính là lý do bắt buộc phải build qua job self-hosted (`build-self-hosted`,
 label `stm32-local`) đã dựng ở mục 9, thay vì job cloud.
 
-**9.6.2. Chuẩn bị GHS trên máy runner**
+**9.8.2. Chuẩn bị GHS trên máy runner**
 
 1. Cài phần mềm GHS (MULTI IDE + gói compiler cho kiến trúc ARM) — bộ cài
    thường tải qua tài khoản MyGHS của công ty, không có sẵn public.
@@ -521,7 +629,7 @@ label `stm32-local`) đã dựng ở mục 9, thay vì job cloud.
    license (thay vì lỗi kiểu "no license found" / "dongle not found") tức là
    driver + dongle đã hoạt động đúng.
 
-**9.6.3. Thêm GHS vào PATH cấp Machine**
+**9.8.3. Thêm GHS vào PATH cấp Machine**
 
 Giống nguyên tắc ở mục 9.2 (bắt buộc PATH cấp **Machine**, vì Windows Service
 chạy dưới `NETWORK SERVICE` không thấy được User PATH của tài khoản đăng nhập):
@@ -534,7 +642,7 @@ $env:Path += ";$ghsBin"
 ccarm -version
 ```
 
-**9.6.4. Đổi bước build trong `build.yml`**
+**9.8.4. Đổi bước build trong `build.yml`**
 
 Job `build-self-hosted` hiện đang gọi CMake + `arm-none-eabi-gcc` (bản test
 tạm, xem ghi chú ở mục 9.1). Có 2 hướng để chuyển sang GHS thật, tùy cách
@@ -559,7 +667,7 @@ Chọn phương án nào phụ thuộc việc project có chuyển hẳn cấu h
 định dạng GHS (`.gpj`) hay vẫn giữ CMake và chỉ đổi compiler bên dưới —
 nên thống nhất với team trước khi sửa `build.yml`.
 
-**9.6.5. Lưu ý số lượng license (seat) khi build song song**
+**9.8.5. Lưu ý số lượng license (seat) khi build song song**
 
 Job hiện dùng `matrix: preset: [Debug, Release]`, tức **build Debug và
 Release song song cùng lúc trên cùng 1 máy**. License GHS dạng dongle
@@ -578,7 +686,7 @@ strategy:
     preset: [Debug, Release]
 ```
 
-**9.6.6. Rủi ro cần lưu ý**
+**9.8.6. Rủi ro cần lưu ý**
 
 - Nếu dongle bị rút ra, hoặc máy runner khởi động lại và driver không tự
   nhận lại dongle, mọi job GHS sẽ fail đồng loạt cho tới khi cắm lại/khởi
