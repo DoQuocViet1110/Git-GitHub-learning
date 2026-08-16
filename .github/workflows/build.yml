@@ -94,17 +94,9 @@ jobs:
 
       - name: Verify local toolchain is on PATH
         run: |
-          $diag = Join-Path (Get-Location) "ci-diag.txt"
-          "whoami=$env:USERNAME" | Out-File -FilePath $diag
-          "PATH=$env:PATH" | Out-File -Append $diag
-          Get-Command cmake,ninja,arm-none-eabi-gcc -ErrorAction SilentlyContinue | Out-File -Append $diag
-          cmake --version *>&1 | Out-File -Append $diag
-          "cmake exit: $LASTEXITCODE" | Out-File -Append $diag
-          ninja --version *>&1 | Out-File -Append $diag
-          "ninja exit: $LASTEXITCODE" | Out-File -Append $diag
-          arm-none-eabi-gcc --version *>&1 | Out-File -Append $diag
-          "gcc exit: $LASTEXITCODE" | Out-File -Append $diag
-          Get-Content $diag
+          cmake --version
+          ninja --version
+          arm-none-eabi-gcc --version
 
       - name: Configure (${{ matrix.preset }})
         run: cmake --preset ${{ matrix.preset }}
