@@ -296,6 +296,7 @@ Vào **Settings → Actions → General** của repo trên GitHub, kiểm tra 2 
 | Job đỏ ngay ở bước "Install ARM GNU Toolchain" | Actions permissions đang giới hạn "verified creators only" | Đổi sang "Allow all actions and reusable workflows" |
 | Job đỏ ở bước "Build" | Code có lỗi compile thật sự | Đọc log lỗi, sửa code y hệt như build lỗi trên máy local |
 | Không thấy mục Artifacts sau khi job xanh | Job vẫn chưa chạy xong hoàn toàn, hoặc `if-no-files-found: error` báo không tìm thấy file `.elf` | Kiểm tra bước Build có sinh đúng file `.elf` trong `build/<preset>/` không |
+| Job **self-hosted** đỏ ngay bước đầu tiên: `Error: pwsh: command not found` | `build.yml` khai báo `shell: pwsh` (PowerShell 7/Core), nhưng máy runner chỉ cài sẵn **Windows PowerShell 5.1** (`powershell.exe`) — Windows không tự có `pwsh.exe` | Đổi `shell: pwsh` thành `shell: powershell` trong `defaults.run` của job `build-self-hosted` (cú pháp PowerShell dùng trong các step này tương thích cả 2 bản), hoặc cài PowerShell 7 trên máy runner rồi giữ nguyên `pwsh` |
 
 ## 9. Self-hosted Runner — build ngay trên máy local (dùng cho license dạng USB dongle)
 
