@@ -14,6 +14,12 @@ jobs:
   build:
     name: Build (${{ matrix.preset }})
     runs-on: ubuntu-latest
+    # Always build on PRs targeting main/develop, or on manual dispatch.
+    # For plain pushes, only build when the commit message opts in with "[build]".
+    if: >
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[build]'))
     strategy:
       fail-fast: false
       matrix:
@@ -55,6 +61,67 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: stm32f4-${{ matrix.preset }}
+          path: |
+            build/${{ matrix.preset }}/*.elf
+            build/${{ matrix.preset }}/*.hex
+            build/${{ matrix.preset }}/*.bin
+            build/${{ matrix.preset }}/*.map
+          if-no-files-found: error
+          retention-days: 14
+
+  # Runs on the local self-hosted runner (labels: self-hosted, stm32-local) instead of
+  # a GitHub-hosted VM. Placeholder for the GHS dongle toolchain: for now it reuses the
+  # same arm-none-eabi-gcc/CMake/Ninja already installed on that machine's PATH, so we
+  # can validate the self-hosted plumbing before swapping in the licensed GHS compiler.
+  build-self-hosted:
+    name: Build on local runner (${{ matrix.preset }})
+    runs-on: [self-hosted, stm32-local]
+    if: >
+      github.event_name == 'pull_request' ||
+      github.event_name == 'workflow_dispatch' ||
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[build]'))
+    defaults:
+      run:
+        shell: pwsh
+    strategy:
+      fail-fast: false
+      matrix:
+        preset: [Debug, Release]
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Verify local toolchain is on PATH
+        run: |
+          cmake --version
+          ninja --version
+          arm-none-eabi-gcc --version
+
+      - name: Configure (${{ matrix.preset }})
+        run: cmake --preset ${{ matrix.preset }}
+
+      - name: Build (${{ matrix.preset }})
+        run: cmake --build --preset ${{ matrix.preset }}
+
+      - name: Generate .hex / .bin
+        working-directory: build/${{ matrix.preset }}
+        run: |
+          $elf = Get-ChildItem -Filter *.elf | Select-Object -First 1 -ExpandProperty FullName
+          Write-Output "ELF file: $elf"
+          arm-none-eabi-objcopy -O ihex $elf ($elf -replace '\.elf$', '.hex')
+          arm-none-eabi-objcopy -O binary $elf ($elf -replace '\.elf$', '.bin')
+
+      - name: Print firmware size
+        working-directory: build/${{ matrix.preset }}
+        run: |
+          $elf = Get-ChildItem -Filter *.elf | Select-Object -First 1 -ExpandProperty FullName
+          arm-none-eabi-size $elf
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: stm32f4-${{ matrix.preset }}-local
           path: |
             build/${{ matrix.preset }}/*.elf
             build/${{ matrix.preset }}/*.hex
