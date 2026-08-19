@@ -8,6 +8,8 @@ on:
     branches:
       - main
       - develop
+  issue_comment:
+    types: [created]
   workflow_dispatch:
 
 jobs:
@@ -73,13 +75,22 @@ jobs:
   # a GitHub-hosted VM. Placeholder for the GHS dongle toolchain: for now it reuses the
   # same arm-none-eabi-gcc/CMake/Ninja already installed on that machine's PATH, so we
   # can validate the self-hosted plumbing before swapping in the licensed GHS compiler.
+  #
+  # Triggered by: push to any branch with "[build]" in the commit message, any
+  # pull_request targeting main/develop, workflow_dispatch, or a PR comment containing
+  # "[build]" (issue_comment) posted by someone with write access (OWNER/MEMBER/
+  # COLLABORATOR) — restricted because this runs arbitrary repo code on the local
+  # machine, see doc/GithubActions/GithubActions_Setup.md section 9.7.
   build-self-hosted:
     name: Build on local runner (${{ matrix.preset }})
     runs-on: [self-hosted, stm32-local]
     if: >
       github.event_name == 'pull_request' ||
       github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[build]'))
+      (github.event_name == 'push' && contains(github.event.head_commit.message, '[build]')) ||
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request != null &&
+      contains(github.event.comment.body, '[build]') &&
+      contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
     defaults:
       run:
         shell: powershell
@@ -89,34 +100,18 @@ jobs:
         preset: [Debug, Release]
 
     steps:
+      # issue_comment events don't carry a ref to the PR's branch by default, so it
+      # must be resolved explicitly. For push/pull_request/workflow_dispatch, github.ref
+      # already points at the right commit (same as omitting `ref` entirely).
       - name: Checkout repository
         uses: actions/checkout@v4
-
-      - name: Verify local toolchain is on PATH
-        run: |
-          cmake --version
-          ninja --version
-          arm-none-eabi-gcc --version
-
-      - name: Configure (${{ matrix.preset }})
-        run: cmake --preset ${{ matrix.preset }}
+        with:
+          ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
 
       - name: Build (${{ matrix.preset }})
-        run: cmake --build --preset ${{ matrix.preset }}
-
-      - name: Generate .hex / .bin
-        working-directory: build/${{ matrix.preset }}
         run: |
-          $elf = Get-ChildItem -Filter *.elf | Select-Object -First 1 -ExpandProperty FullName
-          Write-Output "ELF file: $elf"
-          arm-none-eabi-objcopy -O ihex $elf ($elf -replace '\.elf$', '.hex')
-          arm-none-eabi-objcopy -O binary $elf ($elf -replace '\.elf$', '.bin')
-
-      - name: Print firmware size
-        working-directory: build/${{ matrix.preset }}
-        run: |
-          $elf = Get-ChildItem -Filter *.elf | Select-Object -First 1 -ExpandProperty FullName
-          arm-none-eabi-size $elf
+          & .\build.bat ${{ matrix.preset }}
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4

@@ -4,7 +4,8 @@
 |---|---|
 | Document Title | GitHub Actions CI Setup for STM32F4 firmware build |
 | File workflow  | `.github/workflows/build.yml` |
-| Mục đích       | Tự động build firmware (Debug + Release) mỗi khi có push/PR |
+| File build script (self-hosted) | `build.bat` (ở gốc repo — dùng chung bởi CI job `build-self-hosted` và bởi dev khi build tay trên máy local, xem mục 9.9) |
+| Mục đích       | Tự động build firmware (Debug + Release) mỗi khi có push/PR/comment `[build]` |
 | Đối tượng đọc  | Người chưa từng dùng GitHub Actions, cần hiểu và tự làm lại được |
 
 ---
@@ -61,12 +62,15 @@ on:
     branches:
       - main
       - develop
+  issue_comment:
+    types: [created]
   workflow_dispatch:
 ```
 
 - `push: branches: ['**']` → **sự kiện** push trên bất kỳ branch nào (feature/*, develop, main...)
   sẽ được GitHub ghi nhận, nhưng **có thực sự build hay không còn tùy điều kiện `if:`** ở mục 4.3 bên dưới.
 - `pull_request: branches: [main, develop]` → chạy khi có Pull Request nhắm vào `main` hoặc `develop`, để kiểm tra code trước khi merge.
+- `issue_comment: types: [created]` → GitHub gọi chung comment trên Issue **và** trên Pull Request là "issue_comment" (kể cả comment nằm trên 1 PR). Sự kiện này được ghi nhận cho **mọi** comment mới, nhưng job `build` (cloud) không dùng tới — chỉ job `build-self-hosted` mới thật sự phản ứng với nó, với điều kiện comment chứa `[build]` và người comment có quyền ghi vào repo. Xem chi tiết đầy đủ (lý do, cách checkout đúng branch, giới hạn quyền) ở **mục 9.9**.
 - `workflow_dispatch` → thêm nút **"Run workflow"** trên giao diện GitHub, cho phép bấm chạy tay khi cần (không cần push code mới).
 
 ### 4.3. Điều kiện trigger thật sự (`if:`) — kết hợp PR-gate và commit tag
@@ -323,6 +327,10 @@ sau này công ty có nhiều máy).
 > Hiện tại job này đang dùng tạm `arm-none-eabi-gcc`/`cmake`/`ninja` (giống
 > job cloud) để test luồng self-hosted trước. Khi chuyển sang GHS thật, xem
 > hướng dẫn chi tiết ở mục 9.8 bên dưới.
+
+> Các lệnh build thật sự (configure/build/xuất `.hex`+`.bin`/in size) **không**
+> nằm trực tiếp trong `build.yml` nữa — job chỉ gọi 1 file `build.bat` ở gốc
+> repo. Xem lý do và chi tiết ở **mục 9.9**.
 
 ### 9.2. Cài toolchain build độc lập trên máy runner
 
@@ -699,6 +707,113 @@ strategy:
 - Không thể chạy build GHS song song trên máy runner thứ 2 trừ khi mua thêm
   dongle/license riêng — khác với ARM GCC (miễn phí, không giới hạn số máy).
 
+### 9.9. `build.bat` — gom lệnh build vào 1 file, dùng chung cho CI và build tay
+
+**Vì sao đổi sang dùng `build.bat`**: trước đây job `build-self-hosted` gọi
+trực tiếp từng lệnh `cmake --preset`, `cmake --build`, `objcopy`... ngay
+trong các step YAML (xem mục 4.5 — job cloud vẫn làm theo cách này). Nhược
+điểm: muốn build y hệt CI trên máy mình để debug, phải tự gõ lại từng lệnh
+tay, dễ gõ sai/thiếu bước. `build.bat` gom toàn bộ các lệnh đó vào 1 file
+duy nhất ở gốc repo — vừa được workflow gọi, vừa chạy được trực tiếp trên
+máy local.
+
+**Cách dùng `build.bat`** (chạy trong PowerShell hoặc Command Prompt, ngay
+tại thư mục gốc repo, cần đã cài toolchain theo mục 9.2):
+
+```powershell
+.\build.bat            # build cả Debug lẫn Release, tuần tự
+.\build.bat Debug       # chỉ build Debug
+.\build.bat Release     # chỉ build Release
+```
+
+Mỗi lần chạy cho 1 preset, script sẽ tự:
+1. Kiểm tra `cmake`/`ninja`/`arm-none-eabi-gcc` có trên PATH không (báo lỗi
+   rõ ràng và dừng ngay nếu thiếu, thay vì để lỗi mập mờ ở bước sau).
+2. `cmake --preset <preset>` (configure).
+3. `cmake --build --preset <preset>` (build thật sự).
+4. Tìm file `.elf` vừa sinh ra trong `build\<preset>\`, dùng `objcopy` xuất
+   ra `.hex` và `.bin`.
+5. In dung lượng firmware bằng `arm-none-eabi-size`.
+
+Nếu bất kỳ bước nào lỗi, script dừng ngay và thoát với mã lỗi khác 0 (không
+chạy tiếp các bước sau) — đây là lý do bước gọi `build.bat` trong `build.yml`
+phải kiểm tra `$LASTEXITCODE` để job hiển thị đỏ đúng lúc:
+
+```yaml
+- name: Build (${{ matrix.preset }})
+  run: |
+    & .\build.bat ${{ matrix.preset }}
+    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+```
+
+Job vẫn dùng `matrix: preset: [Debug, Release]` như cũ (xem mục 4.4) — mỗi
+nhánh matrix chỉ truyền đúng 1 preset cho `build.bat`, nên 2 bản Debug/Release
+vẫn build song song thành 2 job con độc lập, không phải Sequential build cả
+2 trong 1 job (khác với khi tự chạy `.\build.bat` không tham số trên máy).
+
+**Muốn thêm bước mới vào quy trình build** (ví dụ: chạy static analysis,
+copy thêm file, ký số firmware...): sửa trực tiếp trong `build.bat`, không
+cần đụng tới `build.yml` — mọi thứ chạy trên self-hosted runner (kể cả build
+tay của dev) đều tự động có bước mới đó.
+
+### 9.10. Trigger qua PR comment `[build]` — self-hosted only, giới hạn quyền
+
+**Vì sao chỉ áp dụng cho job self-hosted, không áp dụng cho job cloud**: mục
+đích ban đầu của trigger này là cho phép chủ động yêu cầu **build ngay trên
+máy local** (nơi có dongle/license thật) ngay từ 1 PR đang mở, mà không cần
+push thêm commit rỗng có `[build]` trong message. Vì vậy điều kiện `if:` của
+job `build-self-hosted` (không phải job `build`) được nối thêm:
+
+```yaml
+if: >
+  github.event_name == 'pull_request' ||
+  github.event_name == 'workflow_dispatch' ||
+  (github.event_name == 'push' && contains(github.event.head_commit.message, '[build]')) ||
+  (github.event_name == 'issue_comment' && github.event.issue.pull_request != null &&
+  contains(github.event.comment.body, '[build]') &&
+  contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
+```
+
+Giải thích từng vế của nhánh `issue_comment`:
+
+| Điều kiện | Vì sao cần |
+|---|---|
+| `github.event_name == 'issue_comment'` | Chỉ xét nhánh này khi trigger đúng là 1 comment mới, không lẫn với push/PR/dispatch. |
+| `github.event.issue.pull_request != null` | GitHub dùng chung sự kiện `issue_comment` cho cả comment trên Issue thường lẫn trên Pull Request. Trường `issue.pull_request` chỉ tồn tại khi comment nằm trên 1 PR — kiểm tra này để bỏ qua comment trên Issue thường (không có branch/code nào để build). |
+| `contains(github.event.comment.body, '[build]')` | Giữ đúng quy ước tag `[build]` đã dùng cho commit message (mục 4.3), áp dụng luôn cho nội dung comment. |
+| `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)` | **Bắt buộc vì lý do bảo mật** — self-hosted runner chạy code của repo ngay trên máy local (mục 9.7). Nếu không có điều kiện này, bất kỳ ai để lại được comment trên PR (kể cả tài khoản ngoài, nếu repo public hoặc có cộng tác viên ngoài) cũng có thể ép máy local chạy build từ 1 branch bất kỳ. Điều kiện này chỉ cho phép comment từ người có quan hệ `OWNER` (chủ repo), `MEMBER` (thành viên tổ chức), hoặc `COLLABORATOR` (được mời cộng tác trực tiếp) kích hoạt build. |
+
+**Checkout đúng branch của PR khi trigger từ comment**: khác với sự kiện
+`pull_request` (tự động checkout đúng code của PR), sự kiện `issue_comment`
+**không** tự mang theo thông tin branch/commit của PR — nó chỉ có số PR
+(`github.event.issue.number`). Bước checkout vì vậy phải tự dựng ref:
+
+```yaml
+- name: Checkout repository
+  uses: actions/checkout@v4
+  with:
+    ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
+```
+
+- Khi trigger từ comment: dùng ref đặc biệt `refs/pull/<số PR>/head` mà GitHub
+  tự tạo sẵn cho mọi PR, luôn trỏ đúng tới commit mới nhất của nhánh nguồn.
+- Khi trigger từ push/pull_request/workflow_dispatch: dùng `github.ref` —
+  giá trị này thực chất giống hệt hành vi mặc định của `actions/checkout` khi
+  không truyền `ref` (branch vừa push, hoặc `refs/pull/<pr>/merge` cho sự
+  kiện `pull_request`), nên không thay đổi hành vi cũ.
+
+**Cách dùng trong thực tế**: mở 1 Pull Request, để lại comment bất kỳ có
+chứa `[build]`, ví dụ:
+
+```
+Sửa xong phần debounce rồi, [build] thử trên máy local xem sao.
+```
+
+Nếu tài khoản comment thuộc nhóm được phép (xem bảng trên), job
+`build-self-hosted` sẽ tự chạy trên đúng commit mới nhất của PR đó — xem kết
+quả ở tab **Actions**, hoặc bấm trực tiếp vào check "Build on local runner"
+hiện dưới chính comment/PR đó.
+
 ## 10. Đem setup này sang 1 repo khác
 
 Muốn dựng lại đúng pipeline này (cloud build + self-hosted runner) cho 1 repo
@@ -710,6 +825,7 @@ lại thủ công trên máy** (không nằm trong file nào cả).
 | File | Copy nguyên hay phải sửa? |
 |---|---|
 | `.github/workflows/build.yml` | **Phải sửa** — dùng làm template, không copy y nguyên được |
+| `build.bat` | **Phải sửa** — chỉ dùng được nguyên nếu repo mới cũng là CMake + preset `Debug`/`Release` + ARM GCC giống hệt; nếu khác toolchain/preset/tên thư mục build thì phải viết lại nội dung bên trong (khung kiểm tra tool trên PATH + thoát lỗi rõ ràng ở mỗi bước vẫn nên giữ lại) |
 | `doc/GithubActions/GithubActions_Setup.md` (chính file này) | Copy làm tài liệu tham khảo, sửa lại vài chỗ có tên project/file cụ thể (STM32F4, `.elf`...) |
 | `.github/copilot-instructions.md` | Copy được luôn nếu repo mới cũng là project nhúng — chỉ cần điền lại phần "Project context" ở đầu file cho đúng MCU/board mới |
 
@@ -727,6 +843,13 @@ cần đổi:
 - Đường dẫn artifact (`build/${{ matrix.preset }}/*.elf`...) → đúng cấu trúc
   thư mục build của repo mới.
 - `runs-on: [self-hosted, stm32-local]` → đổi label nếu máy/label runner khác.
+- Nội dung `build.bat` → sửa lại theo đúng toolchain/preset thật của repo mới
+  (xem mục 9.9). Nếu repo mới không dùng CMake, viết lại hoàn toàn — chỉ cần
+  giữ nguyên nguyên tắc: exit code khác 0 khi có bước lỗi, để step gọi
+  `build.bat` trong YAML nhận đúng trạng thái pass/fail.
+- Trigger `issue_comment` + điều kiện giới hạn quyền (`author_association`)
+  ở mục 9.10 có thể giữ nguyên không cần sửa, vì không phụ thuộc toolchain
+  cụ thể của project.
 
 Nếu repo mới **khác hệ** (không phải CMake/ARM GCC): chỉ giữ lại phần khung
 (`on:`, điều kiện `if:` dùng tag `[build]`, `matrix`, job self-hosted có
