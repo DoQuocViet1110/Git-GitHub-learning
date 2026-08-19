@@ -1,349 +1,95 @@
-﻿# GitHub Actions CI — Hướng dẫn thiết lập & giải thích chi tiết
+# GitHub Actions CI — Setup Self-hosted Runner build bằng `build.bat`
 
 | | |
 |---|---|
-| Document Title | GitHub Actions CI Setup for STM32F4 firmware build |
-| File workflow  | `.github/workflows/build.yml` |
-| File build script (self-hosted) | `build.bat` (ở gốc repo — dùng chung bởi CI job `build-self-hosted` và bởi dev khi build tay trên máy local, xem mục 9.9) |
-| Mục đích       | Tự động build firmware (Debug + Release) mỗi khi có push/PR/comment `[build]` |
-| Đối tượng đọc  | Người chưa từng dùng GitHub Actions, cần hiểu và tự làm lại được |
+| Document Title | GitHub Actions CI Setup for STM32F4 firmware build (self-hosted runner) |
+| File workflow  | `.github/workflows/build.yml` (job `build-self-hosted`) |
+| File build script | `build.bat` (gốc repo) |
+| Mục đích       | Build firmware (Debug + Release) **ngay trên máy local** mỗi khi push (có tag `[build]`), tạo/cập nhật Pull Request, hoặc comment `[build]` trên PR |
+| Đối tượng đọc  | Người **chưa từng dùng GitHub Actions**, cần tự làm lại được toàn bộ setup từ đầu, chỉ cần đọc và làm theo thứ tự từ trên xuống dưới |
+| Phạm vi tài liệu | Tài liệu này tập trung **duy nhất** vào workflow mới: job self-hosted build bằng `build.bat`. Job build trên cloud (`ubuntu-latest`) và các hướng mở rộng khác (GHS dongle, Linux runner) được gom vào phần **Phụ lục** ở cuối, không bắt buộc đọc để hoàn thành setup chính. |
 
 ---
 
-## 1. GitHub Actions là gì (tóm tắt nhanh)
+## 1. Tổng quan — luồng hoạt động sau khi setup xong
 
-GitHub Actions là dịch vụ **CI/CD (Continuous Integration)** tích hợp sẵn trong GitHub.
-Nó cho phép bạn khai báo một quy trình (gọi là **workflow**) chạy tự động trên máy chủ
-ảo của GitHub mỗi khi có sự kiện xảy ra trong repo (push code, tạo Pull Request, v.v.).
-
-Trong project này, workflow được dùng để: **mỗi khi có code mới được push lên GitHub,
-tự động build firmware bằng đúng toolchain ARM để kiểm tra code có compile được
-không**, thay vì phải tự build tay trên máy local rồi mới biết có lỗi hay không.
-
-## 2. Các khái niệm cần biết trước khi đọc file YAML
-
-| Khái niệm | Giải thích |
-|---|---|
-| **Workflow** | Toàn bộ 1 file `.yml` trong `.github/workflows/`. Mỗi file là 1 quy trình tự động độc lập. |
-| **Trigger (`on:`)** | Điều kiện để workflow được kích hoạt (push, pull request, chạy tay...). |
-| **Job** | Một nhóm công việc chạy trên 1 máy ảo (runner). 1 workflow có thể có nhiều job. |
-| **Runner** | Máy ảo mà GitHub cấp miễn phí để chạy job (ví dụ `ubuntu-latest`). |
-| **Step** | Một bước cụ thể bên trong job (chạy lệnh shell, hoặc gọi 1 "Action" có sẵn). |
-| **Action** | Một đoạn script đóng gói sẵn, dùng lại được (ví dụ: cài toolchain, checkout code). Được viết theo dạng `chủ-sở-hữu/tên-action@version`. |
-| **Matrix** | Cơ chế cho phép 1 job chạy lặp lại nhiều lần với các tham số khác nhau (ở đây là chạy song song bản Debug và Release). |
-| **Artifact** | File kết quả (ví dụ `.hex`, `.bin`) được lưu lại sau khi job chạy xong, có thể tải về từ tab Actions trên GitHub. |
-
-## 3. File đã tạo
-
-Đường dẫn: **`.github/workflows/build.yml`**
-
-GitHub tự động quét mọi file `.yml`/`.yaml` nằm trong thư mục `.github/workflows/`
-của repo — chỉ cần file nằm đúng chỗ này và cú pháp hợp lệ là nó sẽ tự chạy,
-**không cần đăng ký hay bật thủ công ở đâu khác**.
-
-## 4. Giải thích từng phần trong `build.yml`
-
-### 4.1. Tên workflow
-
-```yaml
-name: Build Firmware
+```
+Bạn push code / mở PR / comment "[build]" trên PR
+        │
+        ▼
+GitHub ghi nhận sự kiện, kiểm tra điều kiện trigger (mục 4)
+        │  (nếu khớp điều kiện)
+        ▼
+Agent runner (cài sẵn, chạy nền trên máy local) tự nhận job
+        │
+        ▼
+Runner tự "git checkout" đúng commit/branch cần build
+        │
+        ▼
+Runner chạy "build.bat <Debug|Release>"
+        │
+        ▼
+build.bat: cmake configure → cmake build → objcopy ra .hex/.bin → in size
+        │
+        ▼
+Runner nén .elf/.hex/.bin/.map thành Artifact, upload lên GitHub
+        │
+        ▼
+Bạn vào tab Actions trên GitHub, tải Artifact về
 ```
 
-Đây là tên hiển thị trên tab **Actions** của GitHub. Đặt tên ngắn gọn, dễ nhận biết.
+Khái niệm nền tảng (Workflow, Trigger, Job, Runner, Step, Artifact...) nếu
+chưa quen, xem giải thích ngắn gọn ở **Phụ lục E**. Tài liệu chính bên dưới
+giả định bạn đã biết sơ các khái niệm này và muốn bắt tay setup ngay.
 
-### 4.2. Trigger — khi nào workflow chạy
+## 2. Trước khi bắt đầu — chuẩn bị đủ quyền
 
-```yaml
-on:
-  push:
-    branches:
-      - '**'
-  pull_request:
-    branches:
-      - main
-      - develop
-  issue_comment:
-    types: [created]
-  workflow_dispatch:
-```
+Setup này cần quyền trên **2 hệ thống khác nhau**: GitHub (repo) và máy
+Windows (nơi cài runner). Thiếu 1 trong các quyền dưới đây, bạn sẽ bị chặn
+giữa chừng ở đúng bước cần quyền đó.
 
-- `push: branches: ['**']` → **sự kiện** push trên bất kỳ branch nào (feature/*, develop, main...)
-  sẽ được GitHub ghi nhận, nhưng **có thực sự build hay không còn tùy điều kiện `if:`** ở mục 4.3 bên dưới.
-- `pull_request: branches: [main, develop]` → chạy khi có Pull Request nhắm vào `main` hoặc `develop`, để kiểm tra code trước khi merge.
-- `issue_comment: types: [created]` → GitHub gọi chung comment trên Issue **và** trên Pull Request là "issue_comment" (kể cả comment nằm trên 1 PR). Sự kiện này được ghi nhận cho **mọi** comment mới, nhưng job `build` (cloud) không dùng tới — chỉ job `build-self-hosted` mới thật sự phản ứng với nó, với điều kiện comment chứa `[build]` và người comment có quyền ghi vào repo. Xem chi tiết đầy đủ (lý do, cách checkout đúng branch, giới hạn quyền) ở **mục 9.9**.
-- `workflow_dispatch` → thêm nút **"Run workflow"** trên giao diện GitHub, cho phép bấm chạy tay khi cần (không cần push code mới).
-
-### 4.3. Điều kiện trigger thật sự (`if:`) — kết hợp PR-gate và commit tag
-
-```yaml
-jobs:
-  build:
-    name: Build (${{ matrix.preset }})
-    runs-on: ubuntu-latest
-    if: >
-      github.event_name == 'pull_request' ||
-      github.event_name == 'workflow_dispatch' ||
-      (github.event_name == 'push' && contains(github.event.head_commit.message, '[build]'))
-```
-
-Đây là phần quan trọng nhất quyết định **khi nào job thực sự chạy build**, tránh
-việc build tràn lan mỗi lần push code (tốn phút CI, gây nhiễu team). Quy tắc:
-
-| Trường hợp | Có build không? | Vì sao |
+| # | Cần quyền gì | Dùng ở bước nào |
 |---|---|---|
-| Mở/update Pull Request vào `main` hoặc `develop` | ✅ Luôn build | `github.event_name == 'pull_request'` — dùng làm cổng review bắt buộc trước khi merge |
-| Bấm nút **"Run workflow"** trên GitHub | ✅ Luôn build | `github.event_name == 'workflow_dispatch'` — chủ động chạy tay khi cần |
-| Push commit **có chứa `[build]`** trong commit message | ✅ Build | vế thứ 3 của điều kiện khớp |
-| Push commit **không có `[build]`** trong commit message | ❌ Job hiển thị "Skipped", không build | vế thứ 3 không khớp, không rơi vào 2 vế trên |
+| 1 | Quyền **Admin** trên repo GitHub (hoặc Owner nếu repo thuộc Organization) | Bước 1 (bật Actions), Bước 3 (đăng ký runner) |
+| 2 | Quyền **Local Administrator** trên máy Windows sẽ chạy runner | Bước 2 (cài toolchain, sửa PATH cấp Machine), Bước 3 (cài runner làm Windows Service), Bước 4 (đổi PowerShell Execution Policy) |
+| 3 | Máy có thể ra Internet (tải toolchain + runner + kết nối tới GitHub) | Bước 2, Bước 3 |
 
-**Cách dùng trong thực tế**: khi push code bình thường lên feature branch để lưu
-tiến độ, cứ commit/push như thường — sẽ **không** tốn CI. Khi nào muốn GitHub
-tự build thử (ví dụ vừa sửa xong 1 phần, muốn chắc chắn compile được trên máy
-sạch), chỉ cần thêm `[build]` vào commit message, ví dụ:
+> Nếu bạn đang setup trên **máy của khách hàng / repo private của khách
+> hàng** (không phải máy/repo của chính bạn), 2 quyền trên thường phải xin
+> khách hàng cấp trước — xem danh sách đầy đủ, chi tiết hơn (bao gồm cả các
+> trường hợp có thể phát sinh do chính sách bảo mật nội bộ của khách hàng)
+> ở **mục 8**.
 
-```bash
-git commit -m "feat: add debounce for button input [build]"
-```
+## 3. Bước 1 — Bật GitHub Actions cho repo
 
-Khi mở Pull Request thì **không cần quan tâm tag này nữa** — PR luôn tự build
-để đảm bảo code sắp merge vào `develop`/`main` là hợp lệ.
+Làm trên trình duyệt, cần tài khoản có quyền **Admin** trên repo.
 
-> Lưu ý: `github.event.head_commit.message` chỉ tồn tại với sự kiện `push`,
-> không tồn tại ở `pull_request`/`workflow_dispatch` — đó là lý do điều kiện
-> phải bọc `contains(...)` trong `(github.event_name == 'push' && ...)`, nếu
-> không sẽ lỗi khi chạy trên PR.
+1. Vào repo trên GitHub → bấm tab **Settings** (nằm ngang hàng Code, Issues,
+   Pull requests — nếu không thấy tab này, tài khoản của bạn chưa có quyền
+   Admin trên repo, cần xin cấp trước khi làm tiếp).
+2. Trong menu bên trái, chọn **Actions → General**.
+3. Mục **Actions permissions**: chọn **"Allow all actions and reusable
+   workflows"**.
+   > Nếu để "Disable actions", workflow sẽ không bao giờ chạy. Nếu chọn chế
+   > độ chỉ cho phép "verified creators", 1 số action bên thứ ba (ví dụ dùng
+   > trong job build trên cloud, xem Phụ lục A) có thể bị chặn.
+4. Mục **Workflow permissions**: để mặc định **"Read repository contents
+   permission"** — đủ dùng, vì workflow chỉ build và upload artifact, không
+   cần ghi ngược lại repo.
+5. Bấm **Save** nếu có thay đổi.
 
-### 4.4. Job và Matrix — build cả Debug lẫn Release
+## 4. Bước 2 — Cài toolchain build trên máy local
 
-```yaml
-jobs:
-  build:
-    name: Build (${{ matrix.preset }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        preset: [Debug, Release]
-```
+Làm **trên chính máy Windows** sẽ chạy runner (không phải máy bạn đang gõ
+lệnh từ xa qua RDP thì vẫn được, miễn RDP đúng vào máy đó).
 
-- `runs-on: ubuntu-latest` → job chạy trên máy ảo Ubuntu do GitHub cấp miễn phí.
-- `matrix: preset: [Debug, Release]` → job này sẽ **tự nhân đôi**, chạy song song
-  2 lần: 1 lần với `matrix.preset = Debug`, 1 lần với `matrix.preset = Release`.
-  Đây chính là 2 preset đã có sẵn trong `CMakePresets.json` của project.
-- `fail-fast: false` → nếu bản Debug lỗi thì bản Release vẫn tiếp tục chạy hết
-  (không bị hủy theo), giúp thấy được toàn bộ lỗi cùng lúc.
+**Mở PowerShell với quyền Administrator**: chuột phải vào biểu tượng
+PowerShell → **"Run as administrator"**. Bắt buộc — thiếu quyền này, lệnh
+sửa PATH cấp Machine ở dưới sẽ báo lỗi.
 
-### 4.5. Các bước (steps) trong mỗi job
-
-**Bước 1 — Lấy code về máy ảo:**
-```yaml
-- name: Checkout repository
-  uses: actions/checkout@v4
-```
-Máy ảo mặc định trống, không có code. Action `checkout` sẽ clone đúng
-commit vừa được push về máy ảo để build.
-
-**Bước 2 — Cài Ninja (build generator):**
-```yaml
-- name: Install Ninja
-  uses: seanmiddleditch/gha-setup-ninja@v5
-```
-Project dùng `Ninja` làm generator cho CMake (khai báo trong `CMakePresets.json`,
-mục `"generator": "Ninja"`), nên máy ảo cần được cài Ninja trước khi `cmake` chạy được.
-
-**Bước 3 — Cài ARM GCC toolchain:**
-```yaml
-- name: Install ARM GNU Toolchain
-  uses: carlosperate/arm-none-eabi-gcc-action@v1
-  with:
-    release: '13.2.Rel1'
-```
-Project build cho vi điều khiển ARM Cortex-M4 (STM32F411), cần trình biên dịch
-`arm-none-eabi-gcc` — khác với gcc thường trên máy tính. Action này tự tải và
-cài đúng phiên bản toolchain, tương tự việc bạn tự cài ARM toolchain trên máy
-local để dùng với `cmake/gcc-arm-none-eabi.cmake`.
-
-**Bước 4 — Configure CMake theo preset:**
-```yaml
-- name: Configure (${{ matrix.preset }})
-  run: cmake --preset ${{ matrix.preset }}
-```
-Tương đương lệnh bạn gõ tay: `cmake --preset Debug` hoặc `cmake --preset Release`.
-Kết quả sinh ra thư mục `build/Debug` hoặc `build/Release`.
-
-**Bước 5 — Build:**
-```yaml
-- name: Build (${{ matrix.preset }})
-  run: cmake --build --preset ${{ matrix.preset }}
-```
-Tương đương `cmake --build --preset Debug`. Đây là bước biên dịch thật sự;
-nếu code có lỗi cú pháp/compile, job sẽ **fail (đỏ)** ngay tại bước này.
-
-**Bước 6 — Xuất file `.hex` / `.bin`:**
-```yaml
-- name: Generate .hex / .bin
-  working-directory: build/${{ matrix.preset }}
-  run: |
-    ELF=$(find . -maxdepth 1 -name '*.elf' | head -n1)
-    arm-none-eabi-objcopy -O ihex "$ELF" "${ELF%.elf}.hex"
-    arm-none-eabi-objcopy -O binary "$ELF" "${ELF%.elf}.bin"
-```
-Mặc định CMake trong project chỉ sinh ra file `.elf`. Bước này dùng lệnh
-`objcopy` (đi kèm ARM toolchain) để chuyển `.elf` thành `.hex`/`.bin`, là các
-định dạng thường dùng để nạp (flash) trực tiếp vào vi điều khiển.
-
-**Bước 7 — In thông tin dung lượng firmware:**
-```yaml
-- name: Print firmware size
-  working-directory: build/${{ matrix.preset }}
-  run: |
-    ELF=$(find . -maxdepth 1 -name '*.elf' | head -n1)
-    arm-none-eabi-size "$ELF"
-```
-In ra dung lượng vùng `text` (flash) / `data` + `bss` (RAM) đã dùng, ngay
-trong log của job — giúp theo dõi firmware có phình to bất thường không.
-
-**Bước 8 — Upload artifact (lưu file để tải về):**
-```yaml
-- name: Upload build artifacts
-  uses: actions/upload-artifact@v4
-  with:
-    name: stm32f4-${{ matrix.preset }}
-    path: |
-      build/${{ matrix.preset }}/*.elf
-      build/${{ matrix.preset }}/*.hex
-      build/${{ matrix.preset }}/*.bin
-      build/${{ matrix.preset }}/*.map
-    if-no-files-found: error
-    retention-days: 14
-```
-Sau khi máy ảo build xong, mọi thứ trong máy ảo sẽ bị xóa. Bước này đóng gói
-các file `.elf/.hex/.bin/.map` thành 1 artifact có tên `stm32f4-Debug` hoặc
-`stm32f4-Release`, lưu lại trên GitHub **14 ngày**, tải về được từ tab Actions.
-
-## 5. Cách kiểm tra workflow có chạy đúng không (từng bước cho người mới)
-
-1. Push code (commit) lên GitHub — bất kỳ branch nào cũng kích hoạt workflow.
-2. Vào trang repo trên GitHub → chọn tab **Actions** (nằm ngang hàng với Code, Issues, Pull requests).
-3. Sẽ thấy 1 run mới tên **"Build Firmware"**, ứng với commit vừa push, đang có biểu tượng vàng (đang chạy).
-4. Bấm vào run đó → sẽ thấy 2 job con: **Build (Debug)** và **Build (Release)**, chạy song song.
-5. Bấm vào từng job để xem log chi tiết từng bước (checkout, cài toolchain, build...).
-   - ✅ Dấu tick xanh ở step/job = thành công.
-   - ❌ Dấu X đỏ = lỗi, bấm vào step bị đỏ để đọc log lỗi (thường là lỗi biên dịch, xử lý y hệt như build lỗi trên máy local).
-6. Nếu cả 2 job đều xanh, kéo xuống cuối trang run đó sẽ thấy mục **Artifacts**,
-   có thể tải `stm32f4-Debug.zip` / `stm32f4-Release.zip` chứa file `.elf/.hex/.bin/.map`.
-
-### 5.1. Artifact (.elf/.hex/.bin) được lưu ở đâu, tải về thế nào
-
-File `.elf`/`.hex`/`.bin`/`.map` sau khi build **không được commit vào repo** —
-chúng chỉ tồn tại dưới dạng **GitHub Actions Artifact**, gắn liền với từng lần
-chạy (run) cụ thể của workflow.
-
-**Cách tải về qua giao diện web (cách thường dùng nhất):**
-
-1. Vào repo trên GitHub → tab **Actions**.
-2. Chọn đúng run bạn cần (mỗi run ứng với 1 lần push/PR/chạy tay, xem theo tên
-   commit hoặc branch để chọn đúng).
-3. Trong trang chi tiết của run đó, kéo xuống **cuối trang** → mục **Artifacts**.
-4. Sẽ thấy 2 mục: `stm32f4-Debug` và `stm32f4-Release` (đúng theo 2 giá trị
-   trong `matrix.preset`). Bấm vào tên artifact để tải file `.zip` về máy.
-5. Giải nén ra sẽ có: `STM32F4.elf`, `STM32F4.hex`, `STM32F4.bin`, `STM32F4.map`.
-
-**Lưu ý quan trọng:**
-
-- Artifact chỉ được giữ lại **14 ngày** kể từ lúc build (do cấu hình
-  `retention-days: 14` trong bước "Upload build artifacts") rồi GitHub sẽ tự
-  xóa — không tích lũy vô hạn theo thời gian.
-- Mỗi lần workflow chạy lại (mỗi lần push mới) sẽ tạo ra **artifact mới**,
-  độc lập với các lần chạy trước — không ghi đè lên artifact cũ.
-- Nếu cần giữ file build **vĩnh viễn** (ví dụ để phát hành bản chính thức),
-  nên dùng tính năng **GitHub Releases** thay vì trông chờ vào Artifact.
-
-**Cách tải bằng `gh` CLI (dành cho ai đã cài GitHub CLI):**
-
-```bash
-# Xem danh sách các lần chạy gần nhất
-gh run list
-
-# Tải toàn bộ artifact của 1 run cụ thể (thay <run-id> bằng ID lấy từ lệnh trên)
-gh run download <run-id>
-```
-
-## 6. Việc cần kiểm tra 1 lần trên GitHub (nếu workflow không tự chạy)
-
-Vào **Settings → Actions → General** của repo trên GitHub, kiểm tra 2 mục sau
-(mặc định GitHub đã để đúng, nhưng nếu tổ chức/repo bị khóa sẵn thì cần đổi lại):
-
-- **Actions permissions**: chọn **"Allow all actions and reusable workflows"**.
-  (Nếu để "Disable actions" thì workflow sẽ không bao giờ chạy; nếu để chế độ
-  chỉ cho phép "verified creators" thì 2 action bên thứ ba dùng trong bài này
-  — `carlosperate/arm-none-eabi-gcc-action` và `seanmiddleditch/gha-setup-ninja`
-  — có thể bị chặn.)
-- **Workflow permissions**: để mặc định **"Read repository contents permission"**
-  là đủ, vì workflow này chỉ build và upload artifact, không cần ghi ngược lại repo.
-
-## 7. Cách chỉnh sửa / mở rộng sau này
-
-- Muốn build thêm 1 preset khác → thêm tên preset vào danh sách
-  `matrix: preset: [Debug, Release, ...]` (preset đó phải tồn tại sẵn trong `CMakePresets.json`).
-- Muốn giới hạn chỉ chạy trên `main`/`develop` thay vì mọi branch → sửa
-  `push: branches: ['**']` thành `push: branches: [main, develop]`.
-- Muốn đổi phiên bản ARM toolchain → sửa giá trị `release:` ở bước "Install ARM GNU Toolchain".
-- Muốn thêm bước chạy unit test (nếu sau này project có test) → thêm 1 step
-  `run: ...` mới, đặt sau bước Build.
-
-## 8. Các lỗi thường gặp
-
-| Hiện tượng | Nguyên nhân thường gặp | Cách xử lý |
-|---|---|---|
-| Không thấy workflow chạy trên tab Actions sau khi push | Actions đang bị Disable ở Settings, hoặc file không nằm đúng `.github/workflows/` | Kiểm tra lại mục 6, kiểm tra đường dẫn file |
-| Job đỏ ngay ở bước "Install ARM GNU Toolchain" | Actions permissions đang giới hạn "verified creators only" | Đổi sang "Allow all actions and reusable workflows" |
-| Job đỏ ở bước "Build" | Code có lỗi compile thật sự | Đọc log lỗi, sửa code y hệt như build lỗi trên máy local |
-| Không thấy mục Artifacts sau khi job xanh | Job vẫn chưa chạy xong hoàn toàn, hoặc `if-no-files-found: error` báo không tìm thấy file `.elf` | Kiểm tra bước Build có sinh đúng file `.elf` trong `build/<preset>/` không |
-| Job **self-hosted** đỏ ngay bước đầu tiên: `Error: pwsh: command not found` | `build.yml` khai báo `shell: pwsh` (PowerShell 7/Core), nhưng máy runner chỉ cài sẵn **Windows PowerShell 5.1** (`powershell.exe`) — Windows không tự có `pwsh.exe` | Đổi `shell: pwsh` thành `shell: powershell` trong `defaults.run` của job `build-self-hosted` (cú pháp PowerShell dùng trong các step này tương thích cả 2 bản), hoặc cài PowerShell 7 trên máy runner rồi giữ nguyên `pwsh` |
-| Job **self-hosted** vẫn đỏ ở bước "Verify local toolchain is on PATH" **dù `cmake`/`ninja`/`arm-none-eabi-gcc` chạy tay bình thường**, fail rất nhanh (~1-2 giây), log không rõ lỗi gì | **PowerShell Execution Policy** ở scope `LocalMachine` đang là `Undefined`/`Restricted`, chặn chạy mọi file `.ps1` mà runner tự tạo ra cho từng bước `run:` — xem giải thích đầy đủ + cách kiểm tra + cách sửa ở **mục 9.5** bên dưới | `Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned -Force` (PowerShell as Administrator) |
-| Đổi PATH cấp Machine hoặc quyền group cho `NETWORK SERVICE` xong nhưng job vẫn lỗi y hệt lỗi cũ | Windows chỉ nạp **PATH** và **group membership vào access token** tại thời điểm service *khởi động (logon)* — service đang chạy sẵn sẽ không tự thấy thay đổi — xem giải thích đầy đủ + cách kiểm tra ở **mục 9.6** bên dưới | Restart lại chính service runner: `Restart-Service -Name "actions.runner.<owner>-<repo>.<name>"` |
-
-## 9. Self-hosted Runner — build ngay trên máy local (dùng cho license dạng USB dongle)
-
-> Toàn bộ mục 9 (9.1–9.8) viết cho máy runner chạy **Windows**. Nếu máy có
-> dongle/cần build local lại là **Linux**, xem riêng **mục 11** ở cuối tài
-> liệu — các khái niệm nền tảng vẫn giống nhau, chỉ khác công cụ hệ điều hành.
-
-### 9.1. Vì sao cần self-hosted runner
-
-Máy ảo (`ubuntu-latest`) của GitHub chạy trên cloud, **không thể truy cập USB
-dongle** cắm ở máy local (ví dụ license GHS). Giải pháp: cài 1 **agent runner**
-ngay trên máy có dongle — agent này tự kết nối ra ngoài (outbound) tới GitHub
-để nhận job, tự `git checkout` code về và build **ngay trên máy đó**, dùng
-được mọi thứ đã cài sẵn (bao gồm dongle). Không cần mở port/inbound vào máy.
-
-Job build trên self-hosted runner nằm ở job `build-self-hosted` trong
-`build.yml`, dùng `runs-on: [self-hosted, stm32-local]` — `stm32-local` là
-**label riêng** đặt cho máy này lúc đăng ký runner, đảm bảo job luôn chạy
-đúng máy có toolchain/dongle, không bị đẩy sang máy self-hosted khác (nếu
-sau này công ty có nhiều máy).
-
-> Hiện tại job này đang dùng tạm `arm-none-eabi-gcc`/`cmake`/`ninja` (giống
-> job cloud) để test luồng self-hosted trước. Khi chuyển sang GHS thật, xem
-> hướng dẫn chi tiết ở mục 9.8 bên dưới.
-
-> Các lệnh build thật sự (configure/build/xuất `.hex`+`.bin`/in size) **không**
-> nằm trực tiếp trong `build.yml` nữa — job chỉ gọi 1 file `build.bat` ở gốc
-> repo. Xem lý do và chi tiết ở **mục 9.9**.
-
-### 9.2. Cài toolchain build độc lập trên máy runner
-
-**Điều kiện trước tiên**: mở **PowerShell với quyền Administrator**
-(chuột phải vào PowerShell → "Run as administrator") — thiếu quyền này,
-lệnh sửa PATH cấp Machine ở bước dưới sẽ báo lỗi.
-
-Cài 3 tool sau, **không phụ thuộc STM32CubeIDE**, để agent chạy nền dưới
-quyền service vẫn tự gọi được: **CMake**, **Ninja**, **ARM GNU Toolchain**
-(`arm-none-eabi-gcc`).
-
-Copy nguyên khối lệnh dưới đây và chạy — nó tự tải, giải nén, dọn file `.zip`
-tạm, cho cả 3 tool vào `C:\stm32-tools`:
+Copy nguyên khối lệnh dưới đây, dán vào PowerShell (Administrator) và Enter.
+Lệnh này tự tải, giải nén, dọn file `.zip` tạm, cài cả 3 tool **CMake**,
+**Ninja**, **ARM GNU Toolchain** vào `C:\stm32-tools`:
 
 ```powershell
 $root = "C:\stm32-tools"
@@ -364,21 +110,24 @@ Invoke-WebRequest -Uri "https://armkeil.blob.core.windows.net/developer/Files/do
 Expand-Archive -Path "$root\arm-gcc.zip" -DestinationPath "$root\arm-gcc" -Force
 Remove-Item "$root\arm-gcc.zip" -Force
 
-Write-Output "Xong. Kiểm tra 3 file .exe dưới đây có tồn tại:"
+Write-Output "Xong. Kiem tra 3 file .exe duoi day co ton tai:"
 Get-ChildItem "$root\cmake" -Recurse -Filter "cmake.exe" | Select-Object -ExpandProperty FullName
 Get-ChildItem "$root\ninja" -Filter "ninja.exe" | Select-Object -ExpandProperty FullName
 Get-ChildItem "$root\arm-gcc" -Recurse -Filter "arm-none-eabi-gcc.exe" | Select-Object -ExpandProperty FullName
 ```
 
-> Muốn bản mới hơn CMake/Ninja/ARM Toolchain? Trang tải chính thức:
+Kết quả mong đợi: 3 dòng đường dẫn `.exe` in ra ở cuối, không có dòng lỗi đỏ.
+
+> Muốn bản mới hơn? Trang tải chính thức:
 > [cmake.org/download](https://cmake.org/download/),
 > [github.com/ninja-build/ninja/releases](https://github.com/ninja-build/ninja/releases),
 > [developer.arm.com/downloads/-/arm-gnu-toolchain-downloads](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads)
 > — chỉ cần sửa lại số version/URL trong script trên.
 
-**Bước tiếp theo — thêm cả 3 vào PATH cấp Machine** (không phải User) —
-bắt buộc, vì Windows Service không chạy dưới tài khoản đăng nhập của bạn nên
-**không thấy được User PATH**, chỉ thấy Machine PATH:
+**Thêm cả 3 tool vào PATH cấp Machine** (không phải User) — bắt buộc, vì
+Windows Service (chạy runner ở Bước 3) không thấy được User PATH của tài
+khoản đang đăng nhập, chỉ thấy Machine PATH. Vẫn trong cửa sổ PowerShell
+(Administrator) đó, chạy tiếp:
 
 ```powershell
 $paths = @(
@@ -393,29 +142,54 @@ $newPath = $machinePath.TrimEnd(';') + ';' + ($paths -join ';')
 # Nạp lại PATH cho cửa sổ PowerShell hiện tại để test ngay, không cần mở lại
 $env:Path += ";" + ($paths -join ';')
 
-Write-Output "--- Kiểm tra ---"
+Write-Output "--- Kiem tra ---"
 cmake --version
 ninja --version
 arm-none-eabi-gcc --version
 ```
 
-Nếu cả 3 lệnh cuối in ra version bình thường (không báo "not recognized") là
-xong bước này.
+Nếu cả 3 lệnh cuối in ra version bình thường (không báo "not recognized") —
+xong Bước 2. Nếu tên thư mục cmake giải nén ra khác `cmake-4.4.2-windows-x86_64`
+(ví dụ do bạn tải bản version khác), sửa lại đúng tên thư mục thật trong biến
+`$paths` ở trên trước khi chạy.
 
-### 9.3. Cài GitHub Actions Runner làm Windows Service
+## 5. Bước 3 — Cho phép chạy PowerShell script (Execution Policy)
 
-**Bước 1 — Lấy URL đăng ký + token (làm trên trình duyệt):**
+**Làm ngay từ bây giờ**, trước khi cài runner ở Bước 4 — nếu bỏ qua bước
+này, job build đầu tiên trên GitHub sẽ fail rất nhanh (~1-2 giây) với lỗi
+khó hiểu dù toolchain đã cài đúng (xem giải thích đầy đủ ở mục 10.1 nếu tò
+mò tại sao).
 
-1. Vào repo trên GitHub → **Settings → Actions → Runners**
-2. Bấm **"New self-hosted runner"**
-3. Chọn OS **Windows**, kiến trúc **x64**
+Vẫn trong PowerShell (Administrator), chạy đúng 1 lệnh:
+
+```powershell
+Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned -Force
+```
+
+Kiểm tra lại:
+
+```powershell
+Get-ExecutionPolicy -List
+```
+
+Dòng `LocalMachine` phải hiện `RemoteSigned`.
+
+## 6. Bước 4 — Cài GitHub Actions Runner làm Windows Service
+
+### 6.1. Lấy URL đăng ký + token (làm trên trình duyệt)
+
+1. Vào repo trên GitHub → **Settings → Actions → Runners**.
+2. Bấm **"New self-hosted runner"**.
+3. Chọn OS **Windows**, kiến trúc **x64**.
 4. Trang sẽ hiện sẵn 4 khối lệnh (Download / Extract / Configure / Run).
    Chỉ cần lấy **2 giá trị** từ khối "Configure": URL của repo và chuỗi
    token sau `--token` (dạng `AXXXXXXXXXXXXXXXXXXXXXXXXX`).
    ⚠️ Token này chỉ sống khoảng **1 giờ** kể từ lúc trang hiện ra — nếu để
    lâu quá phải bấm "New self-hosted runner" lại để lấy token mới.
 
-**Bước 2 — Tải + giải nén runner (chạy trong PowerShell as Administrator):**
+### 6.2. Tải + giải nén runner
+
+Trong PowerShell **as Administrator** (có thể dùng lại cửa sổ ở Bước 2):
 
 ```powershell
 $runnerDir = "C:\actions-runner"
@@ -428,341 +202,50 @@ Remove-Item "$runnerDir\runner.zip" -Force
 > Bản mới hơn: xem [github.com/actions/runner/releases](https://github.com/actions/runner/releases),
 > sửa lại số version `2.336.0` và tên file trong URL trên cho khớp.
 
-**Bước 3 — Đăng ký runner + cài làm Windows Service, chạy nền tự động:**
+> Dùng đúng thư mục gốc ổ đĩa (`C:\actions-runner`), **không** đặt trong
+> `C:\Users\<user>\...` — tránh lỗi `UnauthorizedAccessException` khi
+> service khởi động, giải thích ở mục 10.3.
+
+### 6.3. Đăng ký runner + cài làm Windows Service
 
 ```powershell
 Set-Location "C:\actions-runner"
-./config.cmd --url "https://github.com/<owner>/<repo>" --token "<TOKEN_LẤY_Ở_BƯỚC_1>" `
+./config.cmd --url "https://github.com/<owner>/<repo>" --token "<TOKEN_LẤY_Ở_6.1>" `
   --name "stm32-local-runner" --labels "stm32-local" `
   --work "_work" --unattended --runasservice
 ```
-Thay `<owner>/<repo>` và `<TOKEN_LẤY_Ở_BƯỚC_1>` bằng giá trị thật lấy ở
-Bước 1. Cờ `--runasservice` giúp nó tự cài thành Windows Service luôn,
-không cần giữ cửa sổ PowerShell mở, và tự khởi động lại cùng Windows.
+Thay `<owner>/<repo>` và `<TOKEN_LẤY_Ở_6.1>` bằng giá trị thật. Cờ
+`--runasservice` giúp nó tự cài thành Windows Service luôn, không cần giữ
+cửa sổ PowerShell mở, và tự khởi động lại cùng Windows.
 
 Kết quả mong đợi ở cuối log: dòng
 `Service actions.runner.<owner>-<repo>.<name> started successfully`.
 
-**Bước 4 — Xác nhận runner đang hoạt động:**
+> Nhãn `--labels "stm32-local"` phải khớp đúng với `runs-on: [self-hosted,
+> stm32-local]` khai báo trong `build.yml` (xem mục 8) — nếu đặt tên label
+> khác, job sẽ mãi ở trạng thái "Waiting for a runner" vì không máy nào nhận.
+
+### 6.4. Xác nhận runner đang hoạt động
 
 ```powershell
 Get-Service "actions.runner.*" | Select-Object Name, Status, StartType
 ```
-`Status` phải là `Running`, `StartType` là `Automatic`. Có thể xem log chi
-tiết tại `C:\actions-runner\_diag\Runner_<timestamp>.log` — nếu chạy đúng sẽ
-thấy dòng cuối `Listening for Jobs`.
+`Status` phải là `Running`, `StartType` là `Automatic`. Log chi tiết tại
+`C:\actions-runner\_diag\Runner_<timestamp>.log` — nếu chạy đúng sẽ thấy
+dòng cuối `Listening for Jobs`.
 
-Trên GitHub, vào lại **Settings → Actions → Runners** sẽ thấy runner của bạn
-hiện chấm tròn **xanh (Idle)** thay vì xám.
+Trên GitHub, vào lại **Settings → Actions → Runners** sẽ thấy runner của
+bạn hiện chấm tròn **xanh (Idle)** thay vì xám.
 
-### 9.4. Nếu gặp lỗi `UnauthorizedAccessException` khi service start
+**Bước 4 hoàn tất — setup đã xong, xem mục 7-8 để hiểu workflow đang chạy gì
+và cách test thử.**
 
-Hướng dẫn ở mục 9.2/9.3 đã cố tình dùng thư mục gốc ổ đĩa (`C:\stm32-tools`,
-`C:\actions-runner`) thay vì nằm trong `C:\Users\<user>\...`, **để tránh
-ngay từ đầu** lỗi dưới đây. Mục này chỉ cần đọc nếu bạn lỡ cài
-`actions-runner` bên trong thư mục profile người dùng (ví dụ
-`C:\Users\<user>\actions-runner`) và gặp lỗi khi service khởi động.
+## 7. Hiểu workflow mới: job `build-self-hosted` trong `build.yml`
 
-**Triệu chứng**: service ở trạng thái `Stopped` ngay sau khi cài/start, log
-tại `actions-runner\_diag\Runner_*.log` báo:
-```
-System.UnauthorizedAccessException: Access to the path 'C:\Users\<user>' is denied.
-```
+File này **đã có sẵn** trong repo (`.github/workflows/build.yml`), không
+cần tạo lại — mục này chỉ giải thích để bạn hiểu nó đang làm gì.
 
-**Nguyên nhân**: runner service mặc định chạy dưới tài khoản
-`NT AUTHORITY\NETWORK SERVICE`. Tài khoản này **không có quyền list nội dung
-thư mục profile người dùng** (`C:\Users\<user>`) dù `config.cmd` đã tự cấp
-quyền cho *thư mục con* `actions-runner` — runner khi khởi động kiểm tra
-quyền trên **toàn bộ đường dẫn cha**, nên vẫn fail ở `C:\Users\<user>`.
-Thư mục gốc ổ đĩa (`C:\`) và `C:\actions-runner` không bị vấn đề này vì
-`NETWORK SERVICE` vốn đã có quyền đọc mặc định ở đó.
-
-**Cách fix** (nếu không muốn di chuyển lại thư mục) — cấp quyền List/Read
-tối thiểu, không đệ quy, cho `NETWORK SERVICE` ngay trên thư mục profile:
-```powershell
-icacls "C:\Users\<user>" /grant "NT AUTHORITY\NETWORK SERVICE:(RX)"
-Restart-Service -Name "actions.runner.<owner>-<repo>.<runner-name>"
-```
-Sau đó service sẽ chuyển sang `Running` và log hiện dòng
-`Listening for Jobs` — runner đã sẵn sàng nhận job.
-
-### 9.5. Nếu job self-hosted lỗi ngay bước đầu tiên có chạy lệnh, fail rất nhanh (~1-2 giây), không rõ lý do
-
-**Triệu chứng** — nhận diện đúng lỗi này trước khi làm gì khác:
-
-- Bước "Checkout repository" chạy xong bình thường (dấu tick xanh).
-- Bước kế tiếp — bước **đầu tiên có chứa `run:`** (ví dụ "Verify local toolchain is on PATH") — báo đỏ (fail) chỉ sau khoảng 1-2 giây. Quá nhanh để là lỗi build/compile thật sự (build thật luôn mất ít nhất vài giây tới vài chục giây).
-- Nếu bạn tự mở 1 cửa sổ PowerShell bình thường trên chính máy đó và gõ tay đúng những lệnh trong bước bị lỗi (ví dụ `cmake --version`), lệnh chạy **hoàn toàn bình thường**, không báo lỗi gì.
-- Log của step lỗi trong GitHub Actions thường chỉ có 1 dòng ngắn gọn `Process completed with exit code 1.`, không có thông báo lỗi chi tiết nào khác.
-
-Sự kết hợp "chạy tay OK nhưng CI vẫn fail, fail cực nhanh, log không rõ ràng" là dấu hiệu đặc trưng của lỗi này — nguyên nhân **không nằm ở toolchain** (`cmake`/`ninja`/`gcc`) mà nằm ở việc Windows đang chặn không cho chạy **bất kỳ file script `.ps1` nào**, ngay trước cả khi kịp gọi đến toolchain.
-
-**Vì sao lại xảy ra — giải thích từ đầu cho người chưa biết PowerShell Execution Policy là gì:**
-
-Mỗi khi workflow chạy tới 1 bước có `run: |` (một hoặc nhiều dòng lệnh PowerShell), GitHub Actions runner **không gõ lệnh trực tiếp vào cửa sổ console** như bạn tự làm — nó âm thầm làm 2 việc:
-
-1. Ghi toàn bộ nội dung của `run:` đó ra **1 file tạm đuôi `.ps1`** (nằm trong `...\actions-runner\_work\_temp\`).
-2. Gọi PowerShell để **chạy file `.ps1` đó** bằng kỹ thuật gọi là "dot-source": `. 'đường-dẫn-file.ps1'`.
-
-Windows có sẵn 1 cơ chế bảo mật tên là **Execution Policy** (chính sách thực thi script), quyết định file `.ps1` có được phép chạy hay không (điều này KHÔNG áp dụng cho việc gõ lệnh trực tiếp vào console — đó là lý do tự gõ tay thì chạy được bình thường). Vài mức hay gặp:
-
-| Execution Policy | Ý nghĩa |
-|---|---|
-| `Restricted` | Mức mặc định gốc của Windows. **Không cho chạy bất kỳ file `.ps1` nào**, kể cả file do chính máy tự tạo ra. |
-| `RemoteSigned` | Cho chạy mọi file `.ps1` được tạo ra **trên chính máy đó** (không tải từ Internet về) mà không cần chữ ký số — đúng nhu cầu của máy chạy CI/CD tự sinh script. |
-
-Windows lưu Execution Policy theo **4 phạm vi (scope)** tách biệt nhau, xem bằng lệnh:
-
-```powershell
-Get-ExecutionPolicy -List
-```
-
-Máy đang gặp lỗi này thường cho kết quả dạng:
-
-```
-        Scope ExecutionPolicy
-        ----- ---------------
-MachinePolicy       Undefined
-   UserPolicy       Undefined
-      Process          Bypass
-  CurrentUser    RemoteSigned
- LocalMachine       Undefined
-```
-
-Điểm mấu chốt gây nhầm lẫn: dòng `CurrentUser` có thể đã là `RemoteSigned` (vì trước đây bạn từng tự đổi nó khi cài đặt máy dưới tài khoản của mình) — khiến bạn tưởng script đã được phép chạy. Nhưng dòng `LocalMachine` lại đang là `Undefined`, và khi `LocalMachine` là `Undefined`, Windows sẽ áp dụng mặc định gốc là `Restricted`.
-
-Vấn đề nằm ở chỗ: Windows Service chạy runner (`actions.runner.*`, xem mục 9.3) **không chạy dưới tài khoản Windows mà bạn đang đăng nhập** — mặc định nó chạy dưới 1 tài khoản hệ thống riêng tên là `NT AUTHORITY\NETWORK SERVICE`. Tài khoản này có "hồ sơ" (registry hive) hoàn toàn tách biệt với tài khoản bạn dùng để mở PowerShell hằng ngày, nên **setting `CurrentUser: RemoteSigned` bạn từng đổi không có tác dụng gì với nó**. `NETWORK SERVICE` chỉ nhìn thấy scope `LocalMachine` (áp dụng chung cho toàn máy, mọi tài khoản) — và scope đó đang là `Restricted` → mọi file `.ps1` mà runner tạo ra để chạy từng bước `run:` đều bị chặn ngay từ dòng lệnh đầu tiên, trước cả khi kịp gọi tới `cmake`/`ninja`/`gcc`.
-
-**Cách kiểm tra — xác nhận đúng là lỗi này trước khi sửa:**
-
-1. Mở PowerShell (không cần quyền Administrator) ngay trên máy đang chạy runner.
-2. Gõ:
-   ```powershell
-   Get-ExecutionPolicy -List
-   ```
-3. Nhìn đúng dòng `LocalMachine` — nếu giá trị là `Undefined` hoặc `Restricted`, gần như chắc chắn đây chính là nguyên nhân.
-
-**Cách sửa:**
-
-1. Mở **PowerShell với quyền Administrator** (chuột phải vào biểu tượng PowerShell → "Run as administrator").
-2. Chạy đúng 1 lệnh sau:
-   ```powershell
-   Set-ExecutionPolicy -Scope LocalMachine -ExecutionPolicy RemoteSigned -Force
-   ```
-   - `-Scope LocalMachine`: bắt buộc phải dùng đúng scope này (không phải `CurrentUser`) — đây là scope áp dụng cho **toàn bộ máy**, mọi tài khoản, kể cả `NETWORK SERVICE`.
-   - `RemoteSigned`: đủ an toàn (vẫn chặn script tải từ Internet về mà chưa có chữ ký số) trong khi cho phép chạy các script do chính máy tự sinh ra — đúng trường hợp GitHub Actions runner.
-   - `-Force`: bỏ qua câu hỏi xác nhận "Are you sure you want to change the execution policy?".
-3. Chạy lại `Get-ExecutionPolicy -List` để xác nhận cột `LocalMachine` giờ đã hiện `RemoteSigned`.
-
-> **Không cần** khởi động lại (restart) service runner sau bước này. Execution Policy được Windows đọc lại **mỗi lần có 1 tiến trình PowerShell mới được tạo ra** (mỗi job/step CI đều là 1 tiến trình PowerShell mới) — khác với PATH và quyền group, vốn bị "đóng băng" theo vòng đời của service (xem mục 9.6 ngay dưới đây).
-
-4. Trigger lại workflow (push 1 commit có chứa `[build]` trong message, hoặc vào tab Actions bấm "Run workflow") để xác nhận job self-hosted giờ đã chạy qua được bước đầu tiên.
-
-### 9.6. Vừa đổi PATH cấp Machine / cấp thêm quyền cho NETWORK SERVICE xong nhưng job vẫn lỗi y hệt lỗi cũ
-
-**Triệu chứng**: Bạn đã làm đúng các bước ở mục 9.2 (thêm PATH cấp Machine) hoặc vừa cấp thêm quyền NTFS (`icacls`) cho tài khoản/nhóm chạy runner, tự kiểm tra bằng `[Environment]::GetEnvironmentVariable(...)` hay `icacls` đều thấy thay đổi đã áp dụng đúng — nhưng chạy lại workflow thì job self-hosted **vẫn báo lỗi giống hệt như trước khi sửa** (ví dụ vẫn "not recognized"/không tìm thấy `cmake`, hoặc vẫn "Access is denied").
-
-**Vì sao lại xảy ra — giải thích từ đầu cho người chưa biết "access token" của Windows là gì:**
-
-Khi 1 Windows Service (như service chạy runner) khởi động, Windows tạo cho tiến trình đó 1 thứ gọi là **access token** — hiểu đơn giản như 1 "vé thông hành" được cấp đúng 1 lần tại thời điểm khởi động, trong đó ghi sẵn: tiến trình này chạy dưới tài khoản nào, tài khoản đó thuộc những nhóm (group) quyền nào, và **giá trị PATH cấp Machine tại đúng thời điểm đó**. Vé này được giữ nguyên suốt vòng đời của tiến trình — Windows **không tự động cấp lại vé mới** dù sau đó bạn có đổi PATH hay thêm tài khoản vào nhóm quyền khác.
-
-Nói cách khác: nếu bạn đổi PATH hoặc quyền **sau khi** service đã khởi động, service đó (dù `Status` vẫn hiện `Running` bình thường, trông như không có gì bất thường) **vẫn đang dùng PATH/quyền phiên bản cũ** — thay đổi mới chỉ thật sự có hiệu lực từ **lần khởi động tiếp theo** của service.
-
-**Cách kiểm tra** — xem service đã chạy từ lúc nào, so với lúc bạn thực hiện thay đổi:
-
-```powershell
-$svc = Get-CimInstance Win32_Service -Filter "Name LIKE 'actions.runner%'"
-(Get-Process -Id $svc.ProcessId).StartTime
-```
-
-Nếu thời điểm in ra **sớm hơn** thời điểm bạn chạy lệnh đổi PATH (mục 9.2) hoặc lệnh `icacls` cấp quyền, thì đúng là cần restart lại service.
-
-**Cách sửa** — restart lại chính service runner để nó khởi động lại và được cấp vé thông hành mới:
-
-```powershell
-# Xem đúng tên service (cột Name) trước
-Get-Service "actions.runner.*" | Select-Object Name
-
-# Restart, thay đúng tên lấy được ở lệnh trên
-Restart-Service -Name "actions.runner.<owner>-<repo>.<runner-name>" -Confirm:$false
-```
-
-Kiểm tra lại service đã `Running`:
-```powershell
-Get-Service "actions.runner.*" | Select-Object Name, Status, StartType
-```
-
-> **Lưu ý**: đây chính là lý do thứ tự các bước ở mục 9.2 → 9.3 trong tài liệu này luôn khuyến nghị **cài đặt/cấp quyền toolchain xong trước, rồi mới cài & khởi động runner service** — tránh hẳn việc phải nhớ restart lại sau này. Nếu về sau bạn cần đổi PATH hoặc cấp thêm quyền trong lúc runner đã chạy sẵn từ trước (ví dụ khi chuyển sang cài GHS ở mục 9.8), hãy luôn nhớ restart service ngay sau đó bằng lệnh trên.
-
-### 9.7. Lưu ý bảo mật
-
-- Self-hosted runner chạy **bất kỳ code nào** trong workflow của repo — chỉ
-  dùng cho repo **private/nội bộ**, tránh dùng cho repo public có PR từ
-  người ngoài.
-- Bật **Settings → Actions → General → "Require approval for all outside
-  collaborators"** nếu repo có cộng tác viên bên ngoài.
-- Máy chạy runner cần **luôn bật** để nhận job (service tự khởi động lại
-  cùng Windows nhờ `StartType: Automatic`).
-
-### 9.8. Chuyển sang dùng trình biên dịch GHS (Green Hills Software) qua license USB dongle
-
-Mục 9.1–9.5 ở trên đã dựng xong hạ tầng self-hosted runner (máy có thể tự
-chạy job ngay tại chỗ, truy cập được phần cứng cắm trực tiếp vào máy —
-bao gồm USB dongle license). Phần này hướng dẫn thay trình biên dịch đang
-dùng tạm (ARM GCC) bằng GHS thật.
-
-**9.8.1. Vì sao chỉ self-hosted runner mới dùng được GHS dongle**
-
-License GHS dạng USB dongle (thường dùng driver Sentinel/SafeNet HASP) chỉ
-được phần mềm GHS "nhìn thấy" khi đồng thời thỏa 2 điều kiện:
-
-- Dongle cắm vật lý vào đúng máy đang chạy trình biên dịch, và
-- Driver dongle đã được cài trên máy đó.
-
-Máy ảo cloud (`ubuntu-latest`) không thể đáp ứng cả 2 điều kiện này —
-đây chính là lý do bắt buộc phải build qua job self-hosted (`build-self-hosted`,
-label `stm32-local`) đã dựng ở mục 9, thay vì job cloud.
-
-**9.8.2. Chuẩn bị GHS trên máy runner**
-
-1. Cài phần mềm GHS (MULTI IDE + gói compiler cho kiến trúc ARM) — bộ cài
-   thường tải qua tài khoản MyGHS của công ty, không có sẵn public.
-2. Cài driver dongle đi kèm (Sentinel HASP hoặc tương đương) — thường được
-   cài tự động cùng bộ cài GHS, hoặc cần cài riêng tùy loại dongle.
-3. Cắm dongle vào đúng cổng USB của **máy đang chạy Windows Service
-   `actions.runner.*`** (chính là máy đã cài ở mục 9.3) — không phải máy khác.
-4. Kiểm tra license đã nhận được chưa, ví dụ chạy lệnh compiler kèm cờ version:
-   ```powershell
-   ccarm -version
-   ```
-   (`ccarm.exe` là ví dụ tên compiler C cho ARM của GHS — tên file thật tùy
-   phiên bản/gói cài đã mua, thường nằm trong `C:\ghs\compXXXX\`, xem đúng
-   tên trong thư mục cài GHS trên máy.) Nếu lệnh in ra số version + thông tin
-   license (thay vì lỗi kiểu "no license found" / "dongle not found") tức là
-   driver + dongle đã hoạt động đúng.
-
-**9.8.3. Thêm GHS vào PATH cấp Machine**
-
-Giống nguyên tắc ở mục 9.2 (bắt buộc PATH cấp **Machine**, vì Windows Service
-chạy dưới `NETWORK SERVICE` không thấy được User PATH của tài khoản đăng nhập):
-
-```powershell
-$ghsBin = "C:\ghs\compXXXX"   # thay bằng đường dẫn cài GHS thật trên máy
-$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
-[Environment]::SetEnvironmentVariable("Path", $machinePath.TrimEnd(';') + ';' + $ghsBin, "Machine")
-$env:Path += ";$ghsBin"
-ccarm -version
-```
-
-**9.8.4. Đổi bước build trong `build.yml`**
-
-Job `build-self-hosted` hiện đang gọi CMake + `arm-none-eabi-gcc` (bản test
-tạm, xem ghi chú ở mục 9.1). Có 2 hướng để chuyển sang GHS thật, tùy cách
-project mô tả build:
-
-- **Vẫn giữ CMake**: tạo thêm 1 toolchain file CMake riêng cho GHS (ví dụ
-  `cmake/ghs-arm.cmake`, khai báo `CMAKE_C_COMPILER`/`CMAKE_CXX_COMPILER` trỏ
-  tới `ccarm.exe`/`cxarm.exe` của GHS), rồi sửa bước Configure trong job
-  self-hosted:
-  ```yaml
-  - name: Configure (GHS, ${{ matrix.preset }})
-    run: cmake --preset ${{ matrix.preset }} -DCMAKE_TOOLCHAIN_FILE=cmake/ghs-arm.cmake
-  ```
-- **Dùng thẳng project GHS MULTI gốc** (file `.gpj`): bỏ hẳn bước CMake,
-  gọi trực tiếp `gbuild` — công cụ build dòng lệnh của GHS, không cần mở IDE:
-  ```yaml
-  - name: Build with GHS MULTI
-    run: gbuild -top path\to\project.gpj
-  ```
-
-Chọn phương án nào phụ thuộc việc project có chuyển hẳn cấu hình build sang
-định dạng GHS (`.gpj`) hay vẫn giữ CMake và chỉ đổi compiler bên dưới —
-nên thống nhất với team trước khi sửa `build.yml`.
-
-**9.8.5. Lưu ý số lượng license (seat) khi build song song**
-
-Job hiện dùng `matrix: preset: [Debug, Release]`, tức **build Debug và
-Release song song cùng lúc trên cùng 1 máy**. License GHS dạng dongle
-thường giới hạn số session compile đồng thời (tùy loại đã mua). Nếu dongle
-chỉ cho phép **1 session tại 1 thời điểm**, bản Release sẽ báo lỗi kiểu
-"license unavailable" ngay khi Debug đang chạy. Cách xử lý: kiểm tra với
-bộ phận cấp phép GHS xem license cho phép bao nhiêu session song song; nếu
-chỉ 1, thêm `max-parallel: 1` vào `strategy` để 2 preset chạy **tuần tự**
-thay vì song song:
-
-```yaml
-strategy:
-  fail-fast: false
-  max-parallel: 1
-  matrix:
-    preset: [Debug, Release]
-```
-
-**9.8.6. Rủi ro cần lưu ý**
-
-- Nếu dongle bị rút ra, hoặc máy runner khởi động lại và driver không tự
-  nhận lại dongle, mọi job GHS sẽ fail đồng loạt cho tới khi cắm lại/khởi
-  động lại driver — nên coi máy runner này là điểm phụ thuộc duy nhất
-  (single point of failure) cho việc build bằng GHS.
-- Không thể chạy build GHS song song trên máy runner thứ 2 trừ khi mua thêm
-  dongle/license riêng — khác với ARM GCC (miễn phí, không giới hạn số máy).
-
-### 9.9. `build.bat` — gom lệnh build vào 1 file, dùng chung cho CI và build tay
-
-**Vì sao đổi sang dùng `build.bat`**: trước đây job `build-self-hosted` gọi
-trực tiếp từng lệnh `cmake --preset`, `cmake --build`, `objcopy`... ngay
-trong các step YAML (xem mục 4.5 — job cloud vẫn làm theo cách này). Nhược
-điểm: muốn build y hệt CI trên máy mình để debug, phải tự gõ lại từng lệnh
-tay, dễ gõ sai/thiếu bước. `build.bat` gom toàn bộ các lệnh đó vào 1 file
-duy nhất ở gốc repo — vừa được workflow gọi, vừa chạy được trực tiếp trên
-máy local.
-
-**Cách dùng `build.bat`** (chạy trong PowerShell hoặc Command Prompt, ngay
-tại thư mục gốc repo, cần đã cài toolchain theo mục 9.2):
-
-```powershell
-.\build.bat            # build cả Debug lẫn Release, tuần tự
-.\build.bat Debug       # chỉ build Debug
-.\build.bat Release     # chỉ build Release
-```
-
-Mỗi lần chạy cho 1 preset, script sẽ tự:
-1. Kiểm tra `cmake`/`ninja`/`arm-none-eabi-gcc` có trên PATH không (báo lỗi
-   rõ ràng và dừng ngay nếu thiếu, thay vì để lỗi mập mờ ở bước sau).
-2. `cmake --preset <preset>` (configure).
-3. `cmake --build --preset <preset>` (build thật sự).
-4. Tìm file `.elf` vừa sinh ra trong `build\<preset>\`, dùng `objcopy` xuất
-   ra `.hex` và `.bin`.
-5. In dung lượng firmware bằng `arm-none-eabi-size`.
-
-Nếu bất kỳ bước nào lỗi, script dừng ngay và thoát với mã lỗi khác 0 (không
-chạy tiếp các bước sau) — đây là lý do bước gọi `build.bat` trong `build.yml`
-phải kiểm tra `$LASTEXITCODE` để job hiển thị đỏ đúng lúc:
-
-```yaml
-- name: Build (${{ matrix.preset }})
-  run: |
-    & .\build.bat ${{ matrix.preset }}
-    if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-```
-
-Job vẫn dùng `matrix: preset: [Debug, Release]` như cũ (xem mục 4.4) — mỗi
-nhánh matrix chỉ truyền đúng 1 preset cho `build.bat`, nên 2 bản Debug/Release
-vẫn build song song thành 2 job con độc lập, không phải Sequential build cả
-2 trong 1 job (khác với khi tự chạy `.\build.bat` không tham số trên máy).
-
-**Muốn thêm bước mới vào quy trình build** (ví dụ: chạy static analysis,
-copy thêm file, ký số firmware...): sửa trực tiếp trong `build.bat`, không
-cần đụng tới `build.yml` — mọi thứ chạy trên self-hosted runner (kể cả build
-tay của dev) đều tự động có bước mới đó.
-
-### 9.10. Trigger qua PR comment `[build]` — self-hosted only, giới hạn quyền
-
-**Vì sao chỉ áp dụng cho job self-hosted, không áp dụng cho job cloud**: mục
-đích ban đầu của trigger này là cho phép chủ động yêu cầu **build ngay trên
-máy local** (nơi có dongle/license thật) ngay từ 1 PR đang mở, mà không cần
-push thêm commit rỗng có `[build]` trong message. Vì vậy điều kiện `if:` của
-job `build-self-hosted` (không phải job `build`) được nối thêm:
+### 7.1. Khi nào job này chạy (trigger)
 
 ```yaml
 if: >
@@ -774,282 +257,402 @@ if: >
   contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association))
 ```
 
-Giải thích từng vế của nhánh `issue_comment`:
-
-| Điều kiện | Vì sao cần |
+| Trường hợp | Có build không? |
 |---|---|
-| `github.event_name == 'issue_comment'` | Chỉ xét nhánh này khi trigger đúng là 1 comment mới, không lẫn với push/PR/dispatch. |
-| `github.event.issue.pull_request != null` | GitHub dùng chung sự kiện `issue_comment` cho cả comment trên Issue thường lẫn trên Pull Request. Trường `issue.pull_request` chỉ tồn tại khi comment nằm trên 1 PR — kiểm tra này để bỏ qua comment trên Issue thường (không có branch/code nào để build). |
-| `contains(github.event.comment.body, '[build]')` | Giữ đúng quy ước tag `[build]` đã dùng cho commit message (mục 4.3), áp dụng luôn cho nội dung comment. |
-| `contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)` | **Bắt buộc vì lý do bảo mật** — self-hosted runner chạy code của repo ngay trên máy local (mục 9.7). Nếu không có điều kiện này, bất kỳ ai để lại được comment trên PR (kể cả tài khoản ngoài, nếu repo public hoặc có cộng tác viên ngoài) cũng có thể ép máy local chạy build từ 1 branch bất kỳ. Điều kiện này chỉ cho phép comment từ người có quan hệ `OWNER` (chủ repo), `MEMBER` (thành viên tổ chức), hoặc `COLLABORATOR` (được mời cộng tác trực tiếp) kích hoạt build. |
+| Mở/update Pull Request vào `main` hoặc `develop` | ✅ Luôn build |
+| Bấm nút **"Run workflow"** trên tab Actions (chạy tay) | ✅ Luôn build |
+| Push commit **có chứa `[build]`** trong commit message | ✅ Build |
+| Push commit **không có `[build]`** | ❌ Skip, không tốn build |
+| Comment trên PR **có chứa `[build]`**, người comment là Owner/Member/Collaborator của repo | ✅ Build, dùng đúng code mới nhất của PR đó |
+| Comment trên PR có `[build]` nhưng người comment **không** phải Owner/Member/Collaborator | ❌ Skip — chặn có chủ đích, xem lý do bảo mật ở mục 8 |
+| Comment trên 1 Issue thường (không phải PR) dù có `[build]` | ❌ Skip — không có code/branch nào để build |
 
-**Checkout đúng branch của PR khi trigger từ comment**: khác với sự kiện
-`pull_request` (tự động checkout đúng code của PR), sự kiện `issue_comment`
-**không** tự mang theo thông tin branch/commit của PR — nó chỉ có số PR
-(`github.event.issue.number`). Bước checkout vì vậy phải tự dựng ref:
+### 7.2. Các bước job thực hiện
 
 ```yaml
-- name: Checkout repository
-  uses: actions/checkout@v4
-  with:
-    ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
+    with:
+      ref: ${{ github.event_name == 'issue_comment' && format('refs/pull/{0}/head', github.event.issue.number) || github.ref }}
+
+  - name: Build (${{ matrix.preset }})
+    run: |
+      & .\build.bat ${{ matrix.preset }}
+      if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+  - name: Upload build artifacts
+    uses: actions/upload-artifact@v4
+    with:
+      name: stm32f4-${{ matrix.preset }}-local
+      path: |
+        build/${{ matrix.preset }}/*.elf
+        build/${{ matrix.preset }}/*.hex
+        build/${{ matrix.preset }}/*.bin
+        build/${{ matrix.preset }}/*.map
+      if-no-files-found: error
+      retention-days: 14
 ```
 
-- Khi trigger từ comment: dùng ref đặc biệt `refs/pull/<số PR>/head` mà GitHub
-  tự tạo sẵn cho mọi PR, luôn trỏ đúng tới commit mới nhất của nhánh nguồn.
-- Khi trigger từ push/pull_request/workflow_dispatch: dùng `github.ref` —
-  giá trị này thực chất giống hệt hành vi mặc định của `actions/checkout` khi
-  không truyền `ref` (branch vừa push, hoặc `refs/pull/<pr>/merge` cho sự
-  kiện `pull_request`), nên không thay đổi hành vi cũ.
+1. **Checkout repository** — runner tự `git checkout` đúng commit cần build
+   ngay trên máy local. Với trigger từ comment, ref phải tự dựng thành
+   `refs/pull/<số PR>/head` (GitHub tự tạo sẵn ref này cho mọi PR) vì sự
+   kiện `issue_comment` không tự mang theo thông tin branch như sự kiện
+   `pull_request`; các trigger còn lại dùng `github.ref` — đúng bằng hành vi
+   mặc định nếu không truyền `ref` gì cả.
+2. **Build** — gọi `build.bat` (giải thích chi tiết ở mục 8) với đúng 1
+   preset (`Debug` hoặc `Release`, lấy từ `matrix.preset`). Nếu script thoát
+   với mã lỗi khác 0, dòng `if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }`
+   đảm bảo step — và cả job — hiển thị đỏ đúng lúc trên GitHub.
+3. **Upload build artifacts** — đóng gói `.elf/.hex/.bin/.map` từ
+   `build/<preset>/` thành 1 artifact tên `stm32f4-<preset>-local`, lưu trên
+   GitHub 14 ngày, tải về được từ tab Actions (cách tải: mục 10).
 
-**Cách dùng trong thực tế**: mở 1 Pull Request, để lại comment bất kỳ có
-chứa `[build]`, ví dụ:
+`strategy.matrix.preset: [Debug, Release]` (không đổi so với trước) khiến
+job này chạy **song song 2 lần**, mỗi lần build đúng 1 preset — ra 2 job con
+"Build on local runner (Debug)" và "Build on local runner (Release)".
+
+## 8. `build.bat` — file thực hiện build, dùng chung cho CI và build tay
+
+File `build.bat` nằm ở **gốc repo**, được cả job CI ở mục 7 lẫn chính bạn
+(khi muốn build tay để debug) cùng gọi — đảm bảo build trên CI và build trên
+máy bạn luôn chạy **y hệt nhau từng bước**.
+
+**Cách dùng** (PowerShell hoặc Command Prompt, tại thư mục gốc repo, cần đã
+xong Bước 2):
+
+```powershell
+.\build.bat            # build cả Debug lẫn Release, tuần tự
+.\build.bat Debug       # chỉ build Debug
+.\build.bat Release     # chỉ build Release
+```
+
+Mỗi lần build 1 preset, script tự làm theo đúng thứ tự:
+
+1. Kiểm tra `cmake`/`ninja`/`arm-none-eabi-gcc` có trên PATH — báo lỗi rõ
+   ràng và dừng ngay nếu thiếu công cụ nào, thay vì để lỗi mập mờ ở bước sau.
+2. `cmake --preset <preset>` — configure, sinh thư mục `build\<preset>\`.
+3. `cmake --build --preset <preset>` — build thật sự (biên dịch + link).
+4. Tìm file `.elf` vừa sinh ra, dùng `arm-none-eabi-objcopy` xuất thêm
+   `.hex` và `.bin` (định dạng dùng để nạp vào vi điều khiển).
+5. In dung lượng firmware bằng `arm-none-eabi-size` (theo dõi firmware có
+   phình to bất thường không).
+
+Bất kỳ bước nào lỗi, script dừng ngay lập tức và thoát với mã lỗi khác 0 —
+không chạy tiếp các bước sau, không tạo file `.hex/.bin` giả từ 1 build lỗi.
+
+**Muốn thêm bước vào quy trình build** (chạy static analysis, ký số
+firmware, copy thêm file...): sửa trực tiếp trong `build.bat`, **không**
+cần đụng tới `build.yml` — mọi nơi gọi `build.bat` (CI lẫn build tay) tự
+động có ngay bước mới.
+
+## 9. Test thử — 3 cách trigger
+
+### 9.1. Push kèm tag `[build]`
+
+```bash
+git commit -m "feat: thêm debounce cho nút bấm [build]"
+git push
+```
+
+### 9.2. Mở Pull Request
+
+Mở PR nhắm vào `main` hoặc `develop` — luôn tự build, không cần tag
+`[build]`.
+
+### 9.3. Comment `[build]` trên PR đang mở
+
+Vào 1 PR đã mở sẵn, để lại comment bất kỳ có chứa `[build]`, ví dụ:
 
 ```
 Sửa xong phần debounce rồi, [build] thử trên máy local xem sao.
 ```
 
-Nếu tài khoản comment thuộc nhóm được phép (xem bảng trên), job
-`build-self-hosted` sẽ tự chạy trên đúng commit mới nhất của PR đó — xem kết
-quả ở tab **Actions**, hoặc bấm trực tiếp vào check "Build on local runner"
-hiện dưới chính comment/PR đó.
+Chỉ hoạt động nếu tài khoản comment có vai trò Owner/Member/Collaborator
+trên repo (xem bảng mục 7.1) — comment từ tài khoản khác sẽ bị bỏ qua âm
+thầm (không có gì chạy, cũng không báo lỗi gì).
 
-## 10. Đem setup này sang 1 repo khác
+### 9.4. Xem kết quả
 
-Muốn dựng lại đúng pipeline này (cloud build + self-hosted runner) cho 1 repo
-khác, cần phân biệt rõ 2 nhóm: **file có thể copy sang** và **phần phải làm
-lại thủ công trên máy** (không nằm trong file nào cả).
+1. Vào repo trên GitHub → tab **Actions**.
+2. Chọn run mới nhất tên **"Build Firmware"**.
+3. Sẽ thấy job con **"Build on local runner (Debug)"** và **"Build on local
+   runner (Release)"** — dấu tick xanh = thành công, dấu X đỏ = lỗi (bấm
+   vào để đọc log chi tiết, xử lý y hệt lỗi build trên máy local).
+4. Nếu job xanh, kéo xuống cuối trang run → mục **Artifacts** → tải
+   `stm32f4-Debug-local.zip` / `stm32f4-Release-local.zip` về, giải nén ra
+   sẽ có `STM32F4.elf/.hex/.bin/.map`.
 
-### 10.1. File cần copy sang repo mới
+## 10. Troubleshooting
 
-| File | Copy nguyên hay phải sửa? |
-|---|---|
-| `.github/workflows/build.yml` | **Phải sửa** — dùng làm template, không copy y nguyên được |
-| `build.bat` | **Phải sửa** — chỉ dùng được nguyên nếu repo mới cũng là CMake + preset `Debug`/`Release` + ARM GCC giống hệt; nếu khác toolchain/preset/tên thư mục build thì phải viết lại nội dung bên trong (khung kiểm tra tool trên PATH + thoát lỗi rõ ràng ở mỗi bước vẫn nên giữ lại) |
-| `doc/GithubActions/GithubActions_Setup.md` (chính file này) | Copy làm tài liệu tham khảo, sửa lại vài chỗ có tên project/file cụ thể (STM32F4, `.elf`...) |
-| `.github/copilot-instructions.md` | Copy được luôn nếu repo mới cũng là project nhúng — chỉ cần điền lại phần "Project context" ở đầu file cho đúng MCU/board mới |
+| Hiện tượng | Nguyên nhân | Cách xử lý |
+|---|---|---|
+| Không thấy workflow chạy trên tab Actions sau khi push | Actions đang Disable ở Settings (mục 3), hoặc chưa push lên đúng repo | Kiểm tra lại mục 3 |
+| Job self-hosted mãi ở trạng thái **"Waiting for a runner"**, không bao giờ chạy | Không có runner nào online mang đúng label `stm32-local`, hoặc runner service đang Stopped | Kiểm tra `Get-Service "actions.runner.*"`, xem mục 6.4; kiểm tra label lúc `config.cmd` (mục 6.3) khớp đúng `stm32-local` |
+| Job self-hosted đỏ **rất nhanh (~1-2 giây)**, log chỉ có `Process completed with exit code 1.`, không rõ lỗi gì, dù tự gõ tay các lệnh trong `build.bat` trên chính máy đó lại chạy bình thường | Quên làm Bước 3 (Execution Policy) — xem giải thích đầy đủ ở mục 10.1 | Chạy lại lệnh ở Bước 3 |
+| Vừa đổi PATH cấp Machine (Bước 2) hoặc vừa cấp thêm quyền NTFS xong nhưng job vẫn lỗi y hệt lỗi cũ (`not recognized` / `Access is denied`) | Runner service đã khởi động **trước** khi bạn đổi PATH/quyền — xem giải thích đầy đủ ở mục 10.2 | `Restart-Service -Name "actions.runner.<owner>-<repo>.<name>"` |
+| Lỗi `UnauthorizedAccessException` khi service start | Cài `actions-runner` trong `C:\Users\<user>\...` thay vì gốc ổ đĩa — xem mục 10.3 | Xem cách fix ở mục 10.3, hoặc chuyển thư mục ra gốc ổ đĩa |
+| Job đỏ ở bước "Build" | Code có lỗi compile thật sự | Đọc log lỗi trong `build.bat`, sửa code y hệt như build lỗi trên máy local |
+| Không thấy mục Artifacts dù job xanh | `if-no-files-found: error` báo không tìm thấy `.elf` | Kiểm tra `build.bat` có in đúng dòng "Build finished successfully" không, kiểm tra `build/<preset>/` có file `.elf` không |
 
-**Không cần đem theo**: `.claude/settings.local.json` — đây chỉ là quyền tool
-cục bộ của Claude Code cho thư mục làm việc hiện tại, không liên quan gì tới
-CI/CD của repo, đừng copy sang.
+### 10.1. Giải thích chi tiết: PowerShell Execution Policy chặn script
 
-### 10.2. Trong `build.yml` cần sửa những gì
+Mỗi khi workflow chạy tới 1 bước có `run: |`, runner **không gõ lệnh trực
+tiếp vào console** — nó ghi nội dung ra 1 file tạm `.ps1` (trong
+`...\actions-runner\_work\_temp\`), rồi chạy file đó bằng kỹ thuật
+dot-source. Windows Service chạy runner mặc định dưới tài khoản
+`NT AUTHORITY\NETWORK SERVICE`, tài khoản này chỉ nhìn thấy scope
+`LocalMachine` của Execution Policy (không thấy `CurrentUser` của tài khoản
+bạn đăng nhập hằng ngày, dù bạn từng tự đổi `CurrentUser` thành
+`RemoteSigned` trước đó). Nếu `LocalMachine` đang là `Undefined`/`Restricted`
+(mặc định gốc của Windows), mọi file `.ps1` runner tự tạo ra đều bị chặn
+ngay từ dòng đầu tiên — trước cả khi kịp gọi tới `build.bat`. Đây là lý do
+Bước 3 phải làm **trước khi** cài runner, tránh gặp lỗi này ngay lần chạy
+đầu.
 
-Nếu repo mới **cũng là project CMake + ARM GCC** (giống STM32F4 này): chỉ
-cần đổi:
+### 10.2. Giải thích chi tiết: PATH/quyền không có tác dụng cho service đang chạy sẵn
 
-- `matrix: preset: [Debug, Release]` → đúng tên preset trong `CMakePresets.json`
-  của repo mới.
-- Đường dẫn artifact (`build/${{ matrix.preset }}/*.elf`...) → đúng cấu trúc
-  thư mục build của repo mới.
-- `runs-on: [self-hosted, stm32-local]` → đổi label nếu máy/label runner khác.
-- Nội dung `build.bat` → sửa lại theo đúng toolchain/preset thật của repo mới
-  (xem mục 9.9). Nếu repo mới không dùng CMake, viết lại hoàn toàn — chỉ cần
-  giữ nguyên nguyên tắc: exit code khác 0 khi có bước lỗi, để step gọi
-  `build.bat` trong YAML nhận đúng trạng thái pass/fail.
-- Trigger `issue_comment` + điều kiện giới hạn quyền (`author_association`)
-  ở mục 9.10 có thể giữ nguyên không cần sửa, vì không phụ thuộc toolchain
-  cụ thể của project.
+Khi 1 Windows Service khởi động, Windows cấp cho nó 1 "access token" — ghi
+sẵn tài khoản chạy service, các nhóm quyền, và **giá trị PATH cấp Machine
+tại đúng thời điểm khởi động**. Vé này giữ nguyên suốt vòng đời tiến trình;
+Windows không tự cấp lại dù sau đó bạn đổi PATH hay quyền. Kiểm tra thời
+điểm service start so với thời điểm bạn đổi PATH:
 
-Nếu repo mới **khác hệ** (không phải CMake/ARM GCC): chỉ giữ lại phần khung
-(`on:`, điều kiện `if:` dùng tag `[build]`, `matrix`, job self-hosted có
-`shell: powershell`), còn các step Configure/Build/Generate `.hex` phải viết
-lại hoàn toàn theo đúng toolchain thật của project đó.
+```powershell
+$svc = Get-CimInstance Win32_Service -Filter "Name LIKE 'actions.runner%'"
+(Get-Process -Id $svc.ProcessId).StartTime
+```
 
-### 10.3. Phần KHÔNG nằm trong file, phải làm lại thủ công trên máy
+Nếu thời điểm in ra **sớm hơn** lúc bạn đổi PATH/quyền, restart lại service
+để nó được cấp vé thông hành mới — đây cũng là lý do tài liệu này khuyến
+nghị làm đúng thứ tự Bước 2 → Bước 3 → Bước 4 (cài toolchain xong rồi mới
+cài & khởi động runner service), tránh hẳn phải nhớ restart về sau.
 
-- **Runner self-hosted**: 1 runner = đăng ký cho **đúng 1 repo** (hoặc 1 org).
-  Muốn repo mới cũng build local được, phải chạy lại `config.cmd` **với
-  token mới** lấy từ chính repo mới (Settings → Actions → Runners → New
-  self-hosted runner) — không dùng chung token/registration của repo cũ.
-  Có thể cài thêm 1 instance runner riêng (thư mục khác, ví dụ
-  `C:\actions-runner-<repo-moi>`) trên **cùng máy** nếu muốn cả 2 repo cùng
-  build local song song, không xung đột nhau.
-- **Toolchain (`cmake`/`ninja`/`arm-none-eabi-gcc`) + Execution Policy
-  `RemoteSigned`** (xem mục 9.2 và 9.5): nếu setup trên **cùng máy này**,
-  không cần làm lại — các setting này ở cấp **Machine**, dùng chung được cho
-  mọi repo/runner cài trên máy. Nếu là **máy khác**, phải làm lại toàn bộ
-  mục 9.2–9.3, và có khả năng gặp lại đúng 2 lỗi đã ghi ở mục 9.5–9.6.
+### 10.3. Giải thích chi tiết: UnauthorizedAccessException lúc service start
 
-## 11. Setup self-hosted runner trên Linux (thay vì Windows)
+**Triệu chứng**: service `Stopped` ngay sau khi cài/start, log tại
+`actions-runner\_diag\Runner_*.log` báo
+`System.UnauthorizedAccessException: Access to the path 'C:\Users\<user>' is denied.`
 
-Toàn bộ mục 9 ở trên viết cho máy runner chạy **Windows** (PowerShell,
-Windows Service, `icacls`...). Nếu máy có USB dongle (hoặc máy build local)
-lại là **Linux** (Ubuntu/Debian...), cách làm tương tự nhưng công cụ hệ điều
-hành khác hẳn. Mục này liệt kê đúng những điểm khác biệt, viết cho người
-chưa quen Linux service cũng làm theo được.
+**Nguyên nhân**: `NETWORK SERVICE` không có quyền list nội dung thư mục
+profile người dùng (`C:\Users\<user>`) dù `config.cmd` đã tự cấp quyền cho
+thư mục con `actions-runner` — runner kiểm tra quyền trên **toàn bộ đường
+dẫn cha**. Thư mục gốc ổ đĩa (`C:\`) không bị vấn đề này.
 
-### 11.1. Khác biệt cốt lõi so với Windows — vì sao không gặp lại y hệt các lỗi ở mục 9.5/9.6
+**Cách fix** (nếu không muốn di chuyển lại thư mục):
+```powershell
+icacls "C:\Users\<user>" /grant "NT AUTHORITY\NETWORK SERVICE:(RX)"
+Restart-Service -Name "actions.runner.<owner>-<repo>.<runner-name>"
+```
+
+## 11. Danh sách quyền cần "raise" khi setup trên **repo private + máy của khách hàng**
+
+Khi bạn không phải chủ repo/chủ máy (đi setup cho khách hàng), đây là toàn
+bộ những chỗ **cần xin quyền/phê duyệt trước**, phân theo hệ thống — chuẩn
+bị trước danh sách này để trao đổi với khách hàng 1 lần, tránh bị chặn giữa
+chừng nhiều lần.
+
+### 11.1. Quyền trên GitHub
+
+| Việc cần làm | Quyền cần có | Ai cấp |
+|---|---|---|
+| Bật Actions, đổi Actions permissions / Workflow permissions (mục 3) | **Admin** trên repo | Chủ repo / Owner tổ chức |
+| Tạo token đăng ký runner (Settings → Actions → Runners → New self-hosted runner) (mục 6.1) | **Admin** trên repo | Chủ repo / Owner tổ chức |
+| Nếu repo thuộc **Organization**: chính sách tổ chức có thể **chặn self-hosted runner theo mặc định** ở cấp Organization (Organization Settings → Actions → General → "Policies") | **Owner của Organization** | Owner tổ chức |
+| Nếu repo/tổ chức bật "Require approval for all outside collaborators" hoặc giới hạn action bên thứ ba ("Allow select actions") | **Admin** repo hoặc **Owner** tổ chức | Chủ repo / Owner tổ chức |
+| Xem/tải Artifact, xem log Actions | Quyền **Read** trên repo là đủ (không cần Admin) | — |
+
+### 11.2. Quyền trên máy Windows của khách hàng
+
+| Việc cần làm | Quyền cần có | Lưu ý khi là máy khách hàng |
+|---|---|---|
+| Cài CMake/Ninja/ARM GCC, sửa PATH cấp Machine (mục 4) | **Local Administrator** | Cần khách hàng cấp tài khoản admin cục bộ, hoặc yêu cầu IT khách hàng thực hiện thay |
+| Đổi PowerShell Execution Policy scope `LocalMachine` (mục 5) | **Local Administrator** | Nếu máy join Active Directory và có **Group Policy (GPO)** ép `MachinePolicy` từ domain, lệnh `Set-ExecutionPolicy` cục bộ **sẽ không có tác dụng** — cần IT khách hàng chỉnh GPO, xem `Get-ExecutionPolicy -List` cột `MachinePolicy` để biết có bị GPO khoá không |
+| Cài GitHub Actions Runner làm Windows Service (mục 6.3) | **Local Administrator** (cài Windows Service luôn cần quyền admin) | — |
+| Restart Windows Service khi cần (mục 10.2) | **Local Administrator**, hoặc tài khoản được cấp riêng quyền Start/Stop đúng service đó | Có thể xin cấp quyền hẹp hơn Admin toàn máy nếu khách hàng yêu cầu (qua `sc.exe sdset` hoặc Group Policy) |
+| Truy cập được máy (RDP/tại chỗ) | Tài khoản đăng nhập máy + (nếu RDP) máy phải cho phép RDP từ xa | Xin khách hàng cấp quyền truy cập máy trước khi bắt đầu bất kỳ bước nào |
+
+### 11.3. Quyền mạng / bảo mật doanh nghiệp (dễ bị bỏ sót)
+
+| Việc cần làm | Rủi ro bị chặn | Cần xin gì |
+|---|---|---|
+| Tải toolchain, tải GitHub Actions Runner (mục 4, 6.2) | Firewall/proxy doanh nghiệp chặn outbound HTTPS tới `github.com`, `objects.githubusercontent.com`, `armkeil.blob.core.windows.net` | Xin IT khách hàng mở outbound tới các domain trên, hoặc cấu hình proxy công ty cho runner (biến môi trường `https_proxy` khi cài) |
+| Runner kết nối liên tục ra GitHub để nhận job | Firewall chặn outbound tới `*.actions.githubusercontent.com` khiến runner hiện `Offline` dù service `Running` | Xin IT khách hàng whitelist domain trên (runner chỉ cần outbound, **không** cần mở port inbound) |
+| Chạy PowerShell script tạm, chạy `.exe` toolchain mới tải về | Antivirus/EDR doanh nghiệp (Defender for Endpoint, CrowdStrike...) có thể quarantine file `.ps1`/`.exe` lạ, hoặc chặn "Mark of the Web" trên file tải từ Internet | Xin đội bảo mật khách hàng thêm loại trừ (exclusion) cho `C:\actions-runner`, `C:\stm32-tools`, hoặc yêu cầu `Unblock-File` sau khi tải |
+| Runner service chạy nền liên tục 24/7 | Chính sách máy tự khoá/update/restart ngoài giờ của khách hàng có thể làm gián đoạn runner | Xin loại trừ máy khỏi lịch restart tự động bắt buộc, hoặc chấp nhận runner offline tạm thời sau mỗi lần restart máy (service tự chạy lại nhờ `StartType: Automatic`, không cần can thiệp tay) |
+
+### 11.4. Phê duyệt quy trình nội bộ (không phải "quyền" kỹ thuật, nhưng nên xin trước)
+
+- **Self-hosted runner chạy bất kỳ code nào trong workflow của repo ngay
+  trên máy khách hàng** — về bản chất là cho phép GitHub (và bất kỳ ai đẩy
+  được code/PR/comment hợp lệ vào repo) thực thi lệnh trên máy đó. Nên có
+  **xác nhận bằng văn bản/email** từ khách hàng rằng họ hiểu và đồng ý mô
+  hình này trước khi cài đặt, đặc biệt nếu máy đó còn dùng cho việc khác
+  (không phải máy build chuyên dụng cách ly).
+- Nếu repo **public** hoặc có cộng tác viên ngoài công ty khách hàng: nên
+  đề xuất bật thêm **Settings → Actions → General → "Require approval for
+  all outside collaborators"** để PR từ người lạ không tự động chạy trên
+  máy khách hàng.
+- Nếu máy khách hàng còn dùng để chạy phần mềm/license khác (ví dụ dongle
+  GHS, xem Phụ lục B): xác nhận với khách hàng máy này được phép cài thêm
+  phần mềm (CMake/Ninja/ARM GCC/Runner) mà không xung đột chính sách nội bộ
+  của họ (ví dụ whitelist phần mềm được phép cài).
+
+## 12. Cách chỉnh sửa / mở rộng sau này
+
+- Muốn build thêm 1 preset khác → thêm tên preset vào
+  `matrix: preset: [Debug, Release, ...]` trong `build.yml` (preset đó phải
+  tồn tại sẵn trong `CMakePresets.json`) — không cần sửa `build.bat`, vì nó
+  nhận preset qua tham số dòng lệnh.
+- Muốn thêm bước vào quy trình build (test, ký số, copy file...) → sửa
+  `build.bat`, không cần sửa `build.yml` (xem mục 8).
+- Muốn đổi tên/label runner → sửa `--labels` lúc `config.cmd` (mục 6.3) và
+  `runs-on: [self-hosted, ...]` trong `build.yml` cho khớp.
+- Muốn bỏ tag `[build]`, để **mọi push** đều tự build → xoá điều kiện
+  `(github.event_name == 'push' && contains(...))` trong `if:` (mục 7.1),
+  cân nhắc kỹ vì sẽ build liên tục mỗi lần push, tốn tài nguyên máy local.
+
+---
+
+## Phụ lục A — Job build trên cloud (`ubuntu-latest`)
+
+Ngoài job `build-self-hosted` (nội dung chính của tài liệu này), `build.yml`
+còn có job `build` chạy trên máy ảo GitHub cấp miễn phí (`ubuntu-latest`),
+**độc lập** với self-hosted runner — không cần cài đặt gì thêm, tự chạy
+song song. Job này cài Ninja + ARM GNU Toolchain qua 2 action bên thứ ba
+(`seanmiddleditch/gha-setup-ninja`, `carlosperate/arm-none-eabi-gcc-action`)
+rồi build y hệt logic trong `build.bat` nhưng viết trực tiếp bằng Bash
+trong YAML — dùng để có 1 lớp build "sạch, không phụ thuộc máy local" chạy
+song song, đối chiếu khi nghi ngờ máy local bị thiếu/lệch cấu hình. Job này
+**không** đọc `[build]` từ comment (chỉ push + PR + workflow_dispatch), và
+**không** dùng `build.bat`.
+
+## Phụ lục B — Chuyển sang trình biên dịch GHS (Green Hills Software) qua license USB dongle
+
+Job `build-self-hosted` hiện đang dùng tạm `arm-none-eabi-gcc`/`cmake`/
+`ninja` (giống job cloud) để test luồng self-hosted trước khi có GHS thật.
+Máy ảo cloud không thể truy cập USB dongle cắm ở máy local — đây chính là
+lý do bắt buộc phải build qua self-hosted runner khi dùng GHS.
+
+**Chuẩn bị GHS trên máy runner**:
+1. Cài phần mềm GHS (MULTI IDE + gói compiler ARM) — bộ cài qua tài khoản
+   MyGHS của công ty, không có sẵn public.
+2. Cài driver dongle (Sentinel HASP hoặc tương đương) — thường tự cài cùng
+   GHS.
+3. Cắm dongle vào đúng cổng USB của **máy đang chạy Windows Service
+   `actions.runner.*`**.
+4. Kiểm tra: `ccarm -version` (tên compiler thật tuỳ gói đã mua, thường
+   trong `C:\ghs\compXXXX\`) — in ra version + license tức driver/dongle
+   hoạt động đúng.
+
+**Thêm GHS vào PATH cấp Machine** (giống nguyên tắc mục 4):
+```powershell
+$ghsBin = "C:\ghs\compXXXX"   # thay bằng đường dẫn cài GHS thật
+$machinePath = [Environment]::GetEnvironmentVariable("Path", "Machine")
+[Environment]::SetEnvironmentVariable("Path", $machinePath.TrimEnd(';') + ';' + $ghsBin, "Machine")
+$env:Path += ";$ghsBin"
+ccarm -version
+```
+
+**Đổi `build.bat` để dùng GHS thay vì ARM GCC**: có 2 hướng, tuỳ project có
+chuyển hẳn sang định dạng project GHS (`.gpj`) hay vẫn giữ CMake:
+- **Vẫn giữ CMake**: tạo thêm 1 toolchain file CMake riêng cho GHS (ví dụ
+  `cmake/ghs-arm.cmake`, khai báo `CMAKE_C_COMPILER`/`CMAKE_CXX_COMPILER`
+  trỏ tới `ccarm.exe`/`cxarm.exe`), sửa dòng `cmake --preset %PRESET%` trong
+  `build.bat` thành
+  `cmake --preset %PRESET% -DCMAKE_TOOLCHAIN_FILE=cmake/ghs-arm.cmake`.
+- **Dùng thẳng project GHS MULTI gốc** (`.gpj`): bỏ hẳn các dòng CMake trong
+  `build.bat`, gọi trực tiếp `gbuild -top path\to\project.gpj`.
+
+**Lưu ý số lượng license (seat) khi build song song**: `build.yml` build
+Debug và Release song song trên cùng 1 máy (`matrix.preset`). Nếu dongle
+GHS chỉ cho phép 1 session compile đồng thời, thêm `max-parallel: 1` vào
+`strategy` của job `build-self-hosted` để 2 preset chạy tuần tự thay vì
+song song.
+
+**Rủi ro cần lưu ý**: dongle bị rút ra hoặc máy khởi động lại mà driver
+không tự nhận lại dongle → mọi job GHS fail đồng loạt tới khi cắm lại/khởi
+động lại driver. Không build GHS song song trên máy runner thứ 2 được trừ
+khi mua thêm dongle/license riêng.
+
+## Phụ lục C — Self-hosted runner trên Linux
+
+Toàn bộ tài liệu chính viết cho máy runner **Windows**. Nếu máy có dongle
+(hoặc máy build local) là **Linux**, khái niệm nền tảng giống hệt, chỉ khác
+công cụ hệ điều hành:
 
 | Chủ đề | Windows | Linux |
 |---|---|---|
-| Shell chạy từng bước `run:` | PowerShell (`.ps1`, cần khai báo `shell: powershell`) | **Bash** theo mặc định, không cần khai báo `shell:` |
-| Chặn chạy script kiểu "Execution Policy" (mục 9.5) | Có — `Restricted` chặn mọi `.ps1` | **Không có khái niệm tương đương** — Bash không có execution-policy. Runner tự `chmod +x` file `.sh` tạm nó tạo ra trước khi chạy, nên bước này thường không gặp lỗi tương tự |
-| PATH tách theo scope (Machine/User) (mục 9.2) | Có, phải sửa PATH cấp Machine | Không tách — nhưng service `systemd` **không đọc `~/.bashrc`/`~/.profile`** của user, nên vẫn phải khai báo PATH ở nơi service thấy được (xem mục 11.2) |
-| Cache PATH/quyền vào access token lúc service khởi động (mục 9.6) | Có | **Vẫn có** — `systemd` cũng chỉ nạp môi trường 1 lần lúc service start; đổi `PATH`/quyền xong vẫn phải `systemctl restart` lại service runner, y hệt tinh thần mục 9.6 |
+| Shell chạy từng bước `run:` | PowerShell (`.ps1`, cần `shell: powershell`) | Bash mặc định, không cần khai báo `shell:` |
+| "Execution Policy" chặn script (mục 10.1) | Có | Không có khái niệm tương đương — runner tự `chmod +x` file `.sh` tạm |
+| PATH tách theo scope Machine/User (mục 4) | Có | Không tách, nhưng `systemd` không đọc `~/.bashrc` — vẫn phải khai PATH ở nơi service thấy được (`/etc/profile.d/`) |
+| Cache PATH/quyền vào access token lúc service start (mục 10.2) | Có | Vẫn có — `systemd` cũng chỉ nạp môi trường 1 lần lúc start, vẫn phải `systemctl restart` sau khi đổi PATH/quyền |
 
-Tóm lại: Linux **tránh được** hẳn 1 lớp lỗi (Execution Policy), nhưng **vẫn có** lớp lỗi còn lại (service cache môi trường lúc start) — đừng chủ quan bỏ qua bước restart service sau khi đổi PATH/quyền.
-
-### 11.2. Cài toolchain build trên máy Linux
-
-Cách nhanh nhất — dùng trình quản lý gói có sẵn (ví dụ Ubuntu/Debian):
-
+**Cài toolchain** (Ubuntu/Debian):
 ```bash
 sudo apt update
 sudo apt install -y cmake ninja-build gcc-arm-none-eabi
 ```
 
-Kiểm tra:
-```bash
-cmake --version
-ninja --version
-arm-none-eabi-gcc --version
-```
-
-> Bản `gcc-arm-none-eabi` trong kho `apt` mặc định của Ubuntu thường là bản
-> khá cũ. Nếu cần đúng phiên bản mới (ví dụ để khớp bản đang dùng trên
-> Windows ở mục 9.2), tải thẳng gói `.tar.xz` từ
-> [developer.arm.com/downloads/-/arm-gnu-toolchain-downloads](https://developer.arm.com/downloads/-/arm-gnu-toolchain-downloads),
-> giải nén vào `/opt/arm-gnu-toolchain`, rồi thêm `bin` của nó vào PATH như
-> hướng dẫn ngay dưới đây.
-
-**Thêm vào PATH cho toàn hệ thống** (tương đương PATH cấp Machine trên
-Windows) — tạo 1 file trong `/etc/profile.d/`, áp dụng cho mọi user kể cả
-user chạy service runner:
-
-```bash
-echo 'export PATH="$PATH:/opt/arm-gnu-toolchain/bin"' | sudo tee /etc/profile.d/arm-toolchain.sh
-sudo chmod +x /etc/profile.d/arm-toolchain.sh
-```
-
-> Nếu cài bằng `apt` như trên, `cmake`/`ninja`/`arm-none-eabi-gcc` đã tự nằm
-> ở `/usr/bin` (vốn đã có sẵn trong PATH mặc định của mọi user/service) —
-> bước thêm PATH thủ công này chỉ cần khi tự giải nén toolchain vào 1 thư
-> mục tùy ý như `/opt/...`.
-
-### 11.3. Cài GitHub Actions Runner làm `systemd` service trên Linux
-
-**Bước 1 — Lấy URL đăng ký + token**: làm y hệt mục 9.3 Bước 1 (vào
-**Settings → Actions → Runners → New self-hosted runner**, chọn OS **Linux**
-thay vì Windows, lấy token sau `--token`).
-
-**Bước 2 — Tải, giải nén, đăng ký runner:**
-
+**Cài runner làm `systemd` service**:
 ```bash
 mkdir -p ~/actions-runner && cd ~/actions-runner
-
 curl -o actions-runner-linux-x64.tar.gz -L \
   https://github.com/actions/runner/releases/download/v2.336.0/actions-runner-linux-x64-2.336.0.tar.gz
 tar xzf actions-runner-linux-x64.tar.gz
-
-./config.sh --url "https://github.com/<owner>/<repo>" --token "<TOKEN_LẤY_Ở_BƯỚC_1>" \
+./config.sh --url "https://github.com/<owner>/<repo>" --token "<TOKEN>" \
   --name "stm32-linux-runner" --labels "stm32-local-linux" --work "_work" --unattended
-```
-> Bản mới hơn: xem [github.com/actions/runner/releases](https://github.com/actions/runner/releases)
-> và sửa lại số version + tên file cho khớp, giống ghi chú ở mục 9.3.
-
-**Bước 3 — Cài làm service để chạy nền, tự khởi động lại cùng máy:**
-
-```bash
 sudo ./svc.sh install
 sudo ./svc.sh start
+sudo ./svc.sh status   # phải thấy "active (running)"
 ```
 
-**Bước 4 — Xác nhận runner đang hoạt động:**
+Vì `build-self-hosted` hiện dùng `defaults.run.shell: powershell` và gọi
+`build.bat` (không chạy được trên Linux), cần viết 1 file `build.sh` tương
+đương và thêm 1 job riêng dùng label khác (ví dụ `stm32-local-linux`) —
+chưa nằm trong `build.yml` hiện tại, chỉ thêm khi thật sự có máy Linux cần
+build.
 
-```bash
-sudo ./svc.sh status
-```
-Phải thấy dòng dạng `active (running)`. Trên GitHub, vào lại
-**Settings → Actions → Runners** sẽ thấy runner hiện chấm tròn **xanh (Idle)**.
-
-### 11.4. Thêm job self-hosted cho Linux vào `build.yml`
-
-Vì job `build-self-hosted` hiện tại khai báo cứng `shell: powershell` và
-dùng cú pháp PowerShell (`Get-ChildItem`, `-replace`...) trong các step —
-**không chạy được trên Linux runner**. Cần thêm 1 job **riêng** cho Linux,
-dùng label khác (`stm32-local-linux` ở ví dụ Bước 2 trên) để job cũ (Windows)
-và job mới (Linux) không bị gán nhầm máy:
-
-```yaml
-build-self-hosted-linux:
-  name: Build on local Linux runner (${{ matrix.preset }})
-  runs-on: [self-hosted, stm32-local-linux]
-  if: >
-    github.event_name == 'pull_request' ||
-    github.event_name == 'workflow_dispatch' ||
-    (github.event_name == 'push' && contains(github.event.head_commit.message, '[build]'))
-  strategy:
-    fail-fast: false
-    matrix:
-      preset: [Debug, Release]
-
-  steps:
-    - name: Checkout repository
-      uses: actions/checkout@v4
-
-    - name: Verify local toolchain is on PATH
-      run: |
-        cmake --version
-        ninja --version
-        arm-none-eabi-gcc --version
-
-    - name: Configure (${{ matrix.preset }})
-      run: cmake --preset ${{ matrix.preset }}
-
-    - name: Build (${{ matrix.preset }})
-      run: cmake --build --preset ${{ matrix.preset }}
-
-    - name: Generate .hex / .bin
-      working-directory: build/${{ matrix.preset }}
-      run: |
-        ELF=$(find . -maxdepth 1 -name '*.elf' | head -n1)
-        arm-none-eabi-objcopy -O ihex "$ELF" "${ELF%.elf}.hex"
-        arm-none-eabi-objcopy -O binary "$ELF" "${ELF%.elf}.bin"
-
-    - name: Print firmware size
-      working-directory: build/${{ matrix.preset }}
-      run: |
-        ELF=$(find . -maxdepth 1 -name '*.elf' | head -n1)
-        arm-none-eabi-size "$ELF"
-
-    - name: Upload build artifacts
-      uses: actions/upload-artifact@v4
-      with:
-        name: stm32f4-${{ matrix.preset }}-local-linux
-        path: |
-          build/${{ matrix.preset }}/*.elf
-          build/${{ matrix.preset }}/*.hex
-          build/${{ matrix.preset }}/*.bin
-          build/${{ matrix.preset }}/*.map
-        if-no-files-found: error
-        retention-days: 14
-```
-
-Điểm khác so với bản Windows: không cần khối `defaults: run: shell:`
-(Bash là mặc định), và bước "Generate .hex / .bin"/"Print firmware size"
-dùng lại đúng cú pháp Bash (`find`, `${ELF%.elf}`) giống hệt job `build`
-chạy trên cloud ở mục 4.5 — vì cloud runner (`ubuntu-latest`) vốn cũng là
-Linux.
-
-### 11.5. Lỗi thường gặp riêng trên Linux
+**Lỗi thường gặp riêng Linux**:
 
 | Hiện tượng | Nguyên nhân | Cách xử lý |
 |---|---|---|
-| Job fail ở step đầu tiên với `Permission denied` khi chạy file script tạm | Thư mục chứa `_work/_temp` (hoặc `/tmp`) được mount với tùy chọn `noexec` (chặn thực thi file trong phân vùng đó) — khá phổ biến trên máy được hardening bảo mật | Kiểm tra bằng `mount \| grep $(df --output=target ~/actions-runner/_work \| tail -1)`, nếu thấy `noexec` trong danh sách option, đổi runner sang thư mục nằm trên phân vùng không có `noexec` (thường là `/home` hoặc `/opt`) |
-| Đổi PATH/quyền xong (mục 11.2) mà job vẫn không thấy `cmake`/`gcc` | Giống hệt tinh thần mục 9.6 — `systemd` chỉ nạp môi trường 1 lần lúc service start | `sudo systemctl restart actions.runner.<owner>-<repo>.<name>.service` |
-| `./svc.sh install` báo lỗi thiếu quyền | Cần chạy bằng `sudo` vì thao tác tạo `systemd` service yêu cầu quyền root | Thêm `sudo` trước `./svc.sh install` và `./svc.sh start` |
-| Runner hiện `Offline` trên GitHub dù service `active (running)` | Máy không ra được Internet (firewall/proxy chặn outbound tới `github.com`/`*.actions.githubusercontent.com`) | Kiểm tra bằng `curl -I https://github.com`, mở firewall outbound nếu bị chặn — runner chỉ cần kết nối **ra ngoài**, không cần mở port inbound |
+| `Permission denied` khi chạy script tạm | Thư mục `_work/_temp` mount với `noexec` | Đổi runner sang phân vùng không có `noexec` (`/home`, `/opt`) |
+| Đổi PATH/quyền xong mà job vẫn không thấy tool | `systemd` chỉ nạp môi trường 1 lần lúc start | `sudo systemctl restart actions.runner.<owner>-<repo>.<name>.service` |
+| Runner `Offline` dù service `active (running)` | Firewall/proxy chặn outbound tới `github.com` | `curl -I https://github.com` để kiểm tra, mở firewall outbound nếu bị chặn |
 
-### 11.6. Bảo mật (bổ sung riêng cho Linux)
+**Bảo mật riêng Linux**: không chạy runner dưới `root` — tạo user riêng
+(ví dụ `ghrunner`) chỉ đủ quyền cài + chạy runner.
 
-Áp dụng toàn bộ lưu ý ở mục 9.7, cộng thêm:
+## Phụ lục D — Đem setup này sang 1 repo khác
 
-- Không cài/chạy runner dưới user `root`. Tạo 1 user riêng (ví dụ `ghrunner`)
-  chỉ có đúng quyền cần thiết để cài + chạy runner, tránh trường hợp code
-  trong workflow (chạy dưới quyền user này) vô tình/cố ý phá hỏng hệ thống.
-- Nếu dùng GHS dongle trên Linux, driver dongle (Sentinel HASP bản Linux)
-  thường yêu cầu cấu hình thêm `udev rule` để user không phải `root` truy
-  cập được thiết bị USB — tương tự khái niệm ACL trên Windows ở mục 9.8.2,
-  nhưng cơ chế cấp quyền trên Linux là qua group (`plugdev` hoặc group
-  riêng) + `udev`, không phải `icacls`.
+| File | Copy nguyên hay phải sửa? |
+|---|---|
+| `.github/workflows/build.yml` | **Phải sửa** — dùng làm template, không copy y nguyên |
+| `build.bat` | **Phải sửa** nếu repo mới khác toolchain/preset/tên thư mục build; giữ nguyên nguyên tắc: kiểm tra tool trên PATH + thoát lỗi rõ ràng ở mỗi bước |
+| `doc/GithubActions/GithubActions_Setup.md` (chính file này) | Copy làm tài liệu tham khảo, sửa lại tên project/file cụ thể (STM32F4, `.elf`...) |
+| `.github/copilot-instructions.md` | Copy được luôn nếu repo mới cũng là project nhúng — điền lại "Project context" cho đúng MCU/board mới |
+
+**Trong `build.yml` cần sửa**: `matrix.preset` đúng theo `CMakePresets.json`
+repo mới; đường dẫn artifact đúng cấu trúc thư mục build mới; nhãn
+`runs-on: [self-hosted, ...]` đổi theo label runner thật. Trigger
+`issue_comment` + điều kiện `author_association` (mục 7.1) có thể giữ
+nguyên, không phụ thuộc toolchain cụ thể.
+
+**Phần KHÔNG nằm trong file, phải làm lại thủ công trên máy mới**: đăng ký
+runner mới (1 runner = 1 repo/org, cần token mới lấy từ repo mới — mục 6.1);
+nếu là máy khác, phải làm lại toàn bộ Bước 2–5 (toolchain + Execution
+Policy) từ đầu.
+
+## Phụ lục E — Khái niệm nền tảng (cho người mới hoàn toàn với GitHub Actions)
+
+| Khái niệm | Giải thích |
+|---|---|
+| **Workflow** | Toàn bộ 1 file `.yml` trong `.github/workflows/`. Mỗi file là 1 quy trình tự động độc lập. |
+| **Trigger (`on:`)** | Điều kiện để workflow được kích hoạt (push, pull request, comment, chạy tay...). |
+| **Job** | Một nhóm công việc chạy trên 1 máy (runner). 1 workflow có thể có nhiều job. |
+| **Runner** | Máy chạy job — có thể là máy ảo GitHub cấp miễn phí (`ubuntu-latest`), hoặc **self-hosted**: máy vật lý/ảo do bạn tự cài đặt và duy trì. |
+| **Step** | Một bước cụ thể bên trong job (chạy lệnh shell, hoặc gọi 1 "Action" có sẵn). |
+| **Action** | Đoạn script đóng gói sẵn, dùng lại được (`chủ-sở-hữu/tên-action@version`). |
+| **Matrix** | Cơ chế cho phép 1 job chạy lặp lại nhiều lần với tham số khác nhau (ở đây: build song song bản Debug và Release). |
+| **Artifact** | File kết quả (`.hex`, `.bin`...) lưu lại sau khi job chạy xong, tải về được từ tab Actions. |
