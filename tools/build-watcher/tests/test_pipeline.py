@@ -48,6 +48,21 @@ class PipelineTest(unittest.TestCase):
         self.assertEqual(self.terminal_states(), ["success"])
         self.assertEqual(len(self.github.artifacts), 1)
 
+    def test_release_is_pinned_to_the_built_commit_not_the_request_commit(self):
+        """Regression test: publish_artifact used to omit target_commitish,
+        so GitHub silently tagged the release against the repo's default
+        branch instead of the code that was actually compiled -- caught by
+        inspecting a real release on GitHub, where the tag's commit didn't
+        match the "Request commit" printed in the release body.
+        """
+        self.repo.branch_heads["feature/a"] = "actual-built-sha-1234567890"
+        self.pipeline().process(request(branch="feature/a"))
+
+        self.assertEqual(len(self.github.artifacts), 1)
+        _tag, _name, _notes, _asset, target_commitish = self.github.artifacts[0]
+        self.assertEqual(target_commitish, "actual-built-sha-1234567890")
+        self.assertNotEqual(target_commitish, request().commit.sha)
+
     def test_unknown_requester_never_reaches_the_builder(self):
         result = self.pipeline().process(request(email="stranger@evil.test"))
         self.assertFalse(result.ok)

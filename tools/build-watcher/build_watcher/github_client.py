@@ -53,10 +53,15 @@ class NullGitHubClient:
         self.statuses.append((sha, state, description, target_url))
 
     def publish_artifact(
-        self, tag: str, name: str, notes: str, asset: Path
+        self,
+        tag: str,
+        name: str,
+        notes: str,
+        asset: Path,
+        target_commitish: Optional[str] = None,
     ) -> str:
         log.info("[%s] artifact kept locally: %s", self.label, asset)
-        self.artifacts.append((tag, name, notes, asset))
+        self.artifacts.append((tag, name, notes, asset, target_commitish))
         return ""
 
 
@@ -110,13 +115,27 @@ class GitHubClient:
         except GitHubError as exc:
             log.error("could not set commit status on %s: %s", sha[:12], exc)
 
-    def publish_artifact(self, tag: str, name: str, notes: str, asset: Path) -> str:
+    def publish_artifact(
+        self,
+        tag: str,
+        name: str,
+        notes: str,
+        asset: Path,
+        target_commitish: Optional[str] = None,
+    ) -> str:
         """Upload ``asset`` to a release tagged ``tag``; return its page URL.
 
         Reuses the release when the tag already exists and replaces a
         same-named asset, so re-running a request is not an error.
+
+        ``target_commitish`` pins the new tag to the commit that was
+        actually built. Omitting it leaves the tag pointing at whatever
+        the repository's default branch happens to be at creation time --
+        not the built commit -- which reads as correct on the release page
+        (the description says the right branch) while the git tag itself
+        is silently wrong.
         """
-        release = self._ensure_release(tag, name, notes)
+        release = self._ensure_release(tag, name, notes, target_commitish)
         release_id = release["id"]
         self._delete_existing_asset(release_id, asset.name)
         self._upload_asset(release_id, asset)
@@ -124,14 +143,24 @@ class GitHubClient:
 
     # -- internals ------------------------------------------------------
 
-    def _ensure_release(self, tag: str, name: str, notes: str) -> Dict[str, Any]:
+    def _ensure_release(
+        self, tag: str, name: str, notes: str, target_commitish: Optional[str]
+    ) -> Dict[str, Any]:
+        payload: Dict[str, Any] = {
+            "tag_name": tag,
+            "name": name,
+            "body": notes,
+            "prerelease": True,
+        }
+        if target_commitish:
+            payload["target_commitish"] = target_commitish
         try:
             return self._request(
                 "POST",
                 "{0}/repos/{1}/{2}/releases".format(
                     self.api_base, self.owner, self.repo
                 ),
-                {"tag_name": tag, "name": name, "body": notes, "prerelease": True},
+                payload,
             )
         except GitHubError as exc:
             if "already_exists" not in str(exc) and "422" not in str(exc):

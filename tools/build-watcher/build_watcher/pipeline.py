@@ -62,7 +62,7 @@ class BuildPipeline:
             "building {0}".format(request.branch),
         )
 
-        with self.repo.worktree(request.branch) as worktree:
+        with self.repo.worktree(request.branch) as (worktree, built_sha):
             outcome = self.builder.run(worktree, request.preset, request.tag)
             if not outcome.succeeded:
                 return RequestResult(
@@ -87,8 +87,11 @@ class BuildPipeline:
         url = self.github.publish_artifact(
             tag="build/{0}".format(request.tag),
             name=request.tag,
-            notes=self._notes(request, outcome),
+            notes=self._notes(request, outcome, built_sha),
             asset=archive,
+            # Pin the release to the commit that was actually compiled, not
+            # whatever the repo's default branch happens to be right now.
+            target_commitish=built_sha,
         )
         return RequestResult(
             True, "built in {0:.0f}s".format(outcome.duration_seconds), url
@@ -108,10 +111,11 @@ class BuildPipeline:
             return "branch {0!r} does not exist on the remote".format(request.branch)
         return None
 
-    def _notes(self, request: BuildRequest, outcome) -> str:
+    def _notes(self, request: BuildRequest, outcome, built_sha: str) -> str:
         return "\n".join(
             [
                 "Branch: `{0}`".format(request.branch),
+                "Built from commit: `{0}`".format(built_sha),
                 "Preset: `{0}`".format(request.preset or "all"),
                 "Requested by: {0} <{1}>".format(
                     request.commit.author_name, request.commit.author_email

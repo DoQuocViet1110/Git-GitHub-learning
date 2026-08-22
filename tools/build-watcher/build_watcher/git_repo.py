@@ -12,7 +12,7 @@ import logging
 import subprocess
 import uuid
 from pathlib import Path
-from typing import Iterator, List, Optional, Sequence
+from typing import Iterator, List, Optional, Sequence, Tuple
 
 from .models import Commit
 
@@ -129,17 +129,26 @@ class GitRepo:
     # -- worktrees ------------------------------------------------------
 
     @contextlib.contextmanager
-    def worktree(self, branch: str) -> Iterator[Path]:
+    def worktree(self, branch: str) -> Iterator[Tuple[Path, str]]:
         """Check ``branch`` out into a throwaway worktree for the block.
+
+        Yields (path, sha) -- the exact commit checked out, resolved once
+        up front and pinned by sha rather than by branch name. Without
+        this, a caller has no honest way to say which commit a build
+        artifact actually came from; publish_artifact uses it as the
+        release's target_commitish instead of defaulting to whatever the
+        repo's default branch happens to be (a real bug this replaced --
+        see the commit message).
 
         Detached so nothing here can move a branch pointer, and removed on
         the way out even when the build raises.
         """
         self.workspace.mkdir(parents=True, exist_ok=True)
+        sha = self.remote_head(branch)
         target = self.workspace / "wt-{0}".format(uuid.uuid4().hex[:12])
-        self._run(["worktree", "add", "--detach", str(target), self._remote_ref(branch)])
+        self._run(["worktree", "add", "--detach", str(target), sha])
         try:
-            yield target
+            yield target, sha
         finally:
             try:
                 self._run(["worktree", "remove", "--force", str(target)])

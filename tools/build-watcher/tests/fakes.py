@@ -22,6 +22,7 @@ class FakeRepo:
         self.files: Dict[str, str] = {}
         self.head = head
         self.branches = set(branches)
+        self.branch_heads: Dict[str, str] = {}
         self.fetches = 0
         self.worktrees_created: List[str] = []
 
@@ -64,7 +65,8 @@ class FakeRepo:
     @contextlib.contextmanager
     def worktree(self, branch: str):
         self.worktrees_created.append(branch)
-        yield Path("/fake/worktree/{0}".format(branch.replace("/", "-")))
+        sha = self.branch_heads.get(branch, "built-sha-for-{0}".format(branch))
+        yield Path("/fake/worktree/{0}".format(branch.replace("/", "-"))), sha
 
 
 class FakeBuilder:
