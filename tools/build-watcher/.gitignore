@@ -1,4 +1,8 @@
 __pycache__/
 *.py[cod]
+
+# Tao ra boi setup.bat / luc chay - khong dua vao git
 config.json
+python/
+data/
 *.log

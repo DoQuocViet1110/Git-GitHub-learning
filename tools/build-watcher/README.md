@@ -1,275 +1,592 @@
-# build-watcher — CI kéo (pull-based) cho repo không có quyền Settings
+# build-watcher — Hướng dẫn cài đặt và sử dụng
 
-Build firmware trên máy local khi khách hàng **không thể cấp quyền Settings**
-của repo (không đăng ký được self-hosted Actions runner, không tạo được
-webhook). Thay vì GitHub đẩy job xuống máy build, máy build **tự kéo**: poll
-1 branch chứa file yêu cầu, thấy yêu cầu mới thì checkout, build, đóng gói và
-upload kết quả ngược lên GitHub.
+> **Đọc file này từ trên xuống dưới.** Mỗi bước đều ghi rõ phải làm gì,
+> gõ gì, và kết quả đúng trông như thế nào. Không cần biết lập trình.
 
-Toàn bộ chỉ cần quyền **collaborator bình thường** (đọc/ghi code + commit
-status) — đúng những quyền bạn vốn đã có vì đang push code được.
+---
 
-## Luồng hoạt động
+## MỤC LỤC
+
+| Mục | Nội dung |
+|---|---|
+| [1](#1-tool-này-làm-gì) | Tool này làm gì |
+| [2](#2-cần-chuẩn-bị-gì-trước) | Cần chuẩn bị gì trước |
+| [3](#3-các-file-trong-thư-mục-này) | Các file trong thư mục này |
+| [4](#4-cài-đặt--làm-1-lần-duy-nhất) | **Cài đặt (làm 1 lần)** |
+| [5](#5-chuẩn-bị-phía-github--làm-1-lần-duy-nhất) | **Chuẩn bị phía GitHub (làm 1 lần)** |
+| [6](#6-dùng-hằng-ngày) | Dùng hằng ngày |
+| [7](#7-lấy-kết-quả-build-ở-đâu) | Lấy kết quả build ở đâu |
+| [8](#8-cho-tool-chạy-ngầm-không-cần-giữ-cửa-sổ) | Cho tool chạy ngầm |
+| [9](#9-khắc-phục-sự-cố) | **Khắc phục sự cố** |
+| [10](#10-đổi-sang-repo-khác--máy-khác) | Đổi sang repo khác / máy khác |
+| [11](#11-các-phương-án-dự-phòng) | Các phương án dự phòng |
+| [12](#12-checklist-in-ra-mang-theo) | **Checklist in ra mang theo** |
+| [13](#13-dành-cho-người-kỹ-thuật) | Dành cho người kỹ thuật |
+
+---
+
+## 1. Tool này làm gì
+
+Bình thường muốn build phần mềm, bạn phải ngồi trước máy build, mở thư mục,
+chạy lệnh build. Tool này làm thay bạn: bạn chỉ cần **sửa 1 dòng chữ trên
+GitHub**, máy build sẽ **tự động** tải code về, build, đóng gói kết quả và
+đưa lên GitHub cho bạn tải.
+
+**Quan trọng nhất**: tool này **không cần quyền vào phần Settings** của repo
+khách hàng. Nó chỉ cần đúng những quyền bạn đã có: tải code về và đẩy code
+lên (`git pull` / `git push`).
+
+### Luồng hoạt động
 
 ```
-Bạn: sửa Build_Infor.txt trên trigger branch -> push
-                     │
-                     ▼  (máy build poll mỗi 60s)
-Watcher: git fetch, tìm commit MỚI đã chạm vào Build_Infor.txt
-                     │
-                     ▼
-Parser: đọc "[Build] - [branch] - [preset]" tại đúng commit đó
-                     │
-                     ▼
-Pipeline: kiểm tra allowlist -> đặt status "pending" trên commit
-                     │
-                     ▼
-Builder: git worktree checkout branch -> chạy build.bat
-                     │
-                     ▼
-Packager: gom .elf/.hex/.bin/.map -> zip theo tên branch
-                     │
-                     ▼
-Uploader: tạo GitHub Release + upload zip -> đặt status success/failure
+BƯỚC A  Bạn sửa file Build_Infor.txt trên GitHub, thêm 1 dòng:
+        [Build] - [ten-branch-can-build] - [Debug]
+        rồi bấm push
+                       │
+BƯỚC B  Máy build tự kiểm tra mỗi 60 giây, thấy có yêu cầu mới
+                       │
+BƯỚC C  Máy build tự tải đúng branch đó về
+                       │
+BƯỚC D  Máy build tự chạy file build của dự án
+                       │
+BƯỚC E  Build xong, tự nén kết quả thành file .zip
+                       │
+BƯỚC F  Tự đưa file .zip lên GitHub (mục Releases)
+        và gắn dấu tick xanh / dấu X đỏ lên GitHub
+                       │
+BƯỚC G  Bạn vào GitHub tải file .zip về
 ```
 
-Kết quả hiện ngay trên GitHub: dấu ✅/❌ trên đúng commit đã yêu cầu build,
-và file zip tải về được ở tab **Releases**.
+---
 
-## Vì sao thiết kế theo cách này
+## 2. Cần chuẩn bị gì trước
+
+Trước khi bắt đầu, máy build phải có **4 thứ** sau:
+
+| # | Cần gì | Cách kiểm tra | Nếu chưa có |
+|---|---|---|---|
+| 1 | **Git** | Mở Command Prompt, gõ `git --version` → phải hiện số phiên bản | Tải tại https://git-scm.com/download/win, cài với mọi tuỳ chọn mặc định |
+| 2 | **Đã đăng nhập GitHub trên máy đó** | Xem mục 2.1 ngay dưới | Xem mục 2.1 |
+| 3 | **Bộ công cụ build của dự án** (CMake, Ninja, trình biên dịch...) | Thử build tay 1 lần xem có chạy không | Cài theo hướng dẫn riêng của dự án |
+| 4 | **Kết nối Internet** | Mở trình duyệt vào github.com | Liên hệ IT công ty |
+
+> **Không cần** quyền Administrator. **Không cần** cài Python (tool tự lo).
+
+### 2.1. Đăng nhập GitHub trên máy build (rất quan trọng)
+
+Đây là bước hay bị bỏ sót nhất. Làm **1 lần duy nhất** trên máy build:
+
+1. Mở **Command Prompt**
+2. Gõ lệnh sau (thay `CHU-REPO/TEN-REPO` bằng repo thật của khách hàng):
+   ```
+   git clone https://github.com/CHU-REPO/TEN-REPO.git C:\test-clone
+   ```
+3. Một cửa sổ trình duyệt sẽ hiện ra → **đăng nhập GitHub như bình thường**
+4. Chờ tải xong, rồi **xoá thư mục `C:\test-clone`** đi (không cần nữa)
+
+Sau bước này, Windows đã ghi nhớ thông tin đăng nhập. Tool sẽ tự dùng lại
+thông tin đó — **bạn không cần tạo "token" hay vào trang Settings nào cả.**
+
+> ⚠️ **Đăng nhập bằng tài khoản Windows nào thì sau này phải chạy tool bằng
+> đúng tài khoản Windows đó.** Xem mục 8 để hiểu vì sao.
+
+---
+
+## 3. Các file trong thư mục này
+
+| File | Dùng để làm gì | Bạn có cần đụng vào không |
+|---|---|---|
+| `setup.bat` | **Cài đặt.** Nhấn đúp 1 lần khi mới bắt đầu | ✅ Nhấn đúp |
+| `run.bat` | **Chạy liên tục.** Nhấn đúp để tool bắt đầu theo dõi | ✅ Nhấn đúp |
+| `build-once.bat` | **Kiểm tra 1 lần** rồi thoát. Dùng để thử nghiệm | ✅ Nhấn đúp |
+| `check.bat` | **Kiểm tra cấu hình** có đúng không. Không build gì | ✅ Nhấn đúp |
+| `config.json` | File cấu hình — `setup.bat` tự tạo ra | ⚙️ Chỉ sửa khi đổi repo |
+| `Build_Infor.example.txt` | File mẫu để đưa lên GitHub | 📄 Copy nội dung |
+| `README.md` | Chính là file bạn đang đọc | 📖 Đọc |
+| `config.example.json` | File cấu hình mẫu | ❌ Không đụng |
+| `setup_wizard.py` | Chương trình hỏi thông tin để tạo config | ❌ Không đụng |
+| `build_watcher/` | Mã nguồn của tool | ❌ Không đụng |
+| `tests/` | Các bài kiểm tra tự động | ❌ Không đụng |
+| `python/` | Python — `setup.bat` tự tải về | ❌ Không đụng |
+| `data/` | Nơi chứa code tải về, kết quả build, nhật ký | ❌ Không đụng |
+
+---
+
+## 4. Cài đặt — làm 1 lần duy nhất
+
+### Bước 4.1 — Chép thư mục vào máy build
+
+Chép **toàn bộ thư mục `build-watcher`** vào ổ C, đặt tên ngắn gọn:
+
+```
+C:\build-watcher
+```
+
+> ⚠️ **Đường dẫn phải NGẮN.** Đừng đặt vào `Desktop`, `Documents`, hay
+> `C:\Users\ten-ban\...`. Windows có giới hạn độ dài đường dẫn 260 ký tự;
+> đặt sâu quá sẽ làm build lỗi với thông báo rất khó hiểu.
+>
+> ✅ Đúng: `C:\build-watcher`
+> ❌ Sai: `C:\Users\VietDQ\Desktop\Cong viec\Tool build\build-watcher`
+
+### Bước 4.2 — Nhấn đúp vào `setup.bat`
+
+Một cửa sổ đen sẽ hiện ra và tự làm 6 việc. Bạn chỉ cần **trả lời vài câu hỏi**
+ở BƯỚC 5 của nó.
+
+**Các câu hỏi sẽ được hỏi** (câu nào không rõ thì cứ **nhấn Enter** để dùng
+giá trị mặc định trong dấu ngoặc vuông):
+
+| Câu hỏi | Trả lời thế nào |
+|---|---|
+| Địa chỉ repo trên GitHub | Dán địa chỉ repo khách hàng, ví dụ `https://github.com/ten-khach/ten-repo` |
+| Tên branch chứa file yêu cầu build | Nhấn Enter (dùng `build-requests`) |
+| Tên file yêu cầu build | Nhấn Enter (dùng `Build_Infor.txt`) |
+| Tên file script để build | Tên file build của dự án khách hàng. Nếu là `build.bat` thì nhấn Enter |
+| Các preset cho phép | Nhấn Enter, hoặc gõ tên các cấu hình build của dự án |
+| Đường dẫn file kết quả | Nhấn Enter nếu dự án sinh ra `build/<preset>/*.elf` |
+| Bật báo kết quả lên GitHub? | Nhấn Enter (chọn Có) |
+| Danh sách email được phép | Nhấn Enter (cho phép tất cả) |
+
+### Bước 4.3 — Xem kết quả
+
+Khi chạy đúng, bạn sẽ thấy:
+
+```
+[BUOC 1/6] Kiem tra Git...
+  OK - Da cai Git:
+git version 2.55.0.windows.1
+
+[BUOC 2/6] Kiem tra tai khoan GitHub da dang nhap chua...
+  OK - Da dang nhap bang tai khoan: TEN-TAI-KHOAN-CUA-BAN
+
+[BUOC 3/6] Kiem tra Python...
+  OK - Da cai:
+Python 3.12.10
+
+[BUOC 4/6] Kiem tra tool con nguyen ven...
+  OK - Tat ca bai kiem tra deu dat:
+Ran 54 tests in 0.185s
+
+[BUOC 5/6] Tao file cau hinh...
+  (các câu hỏi ở đây)
+
+[BUOC 6/6] Kiem tra ket noi toi repo...
+  check passed
+
+====================================================================
+  CAI DAT HOAN TAT
+====================================================================
+```
+
+Thấy dòng **`CAI DAT HOAN TAT`** là xong. Nếu không thấy → xem **mục 9**.
+
+---
+
+## 5. Chuẩn bị phía GitHub — làm 1 lần duy nhất
+
+Tool cần 1 branch riêng trên repo khách hàng để bạn đặt yêu cầu build vào đó.
+
+> Bước này **không cần** quyền Settings. Chỉ cần quyền push code bình thường.
+
+### Cách làm bằng giao diện web GitHub (dễ nhất)
+
+1. Vào repo khách hàng trên GitHub
+2. Bấm vào ô chọn branch (thường ghi `main` hoặc `master`)
+3. Gõ tên mới: **`build-requests`** → bấm **"Create branch: build-requests"**
+4. Bấm nút **"Add file"** → **"Create new file"**
+5. Đặt tên file: **`Build_Infor.txt`**
+6. Nội dung, gõ đúng như sau:
+   ```
+   # File yeu cau build
+   # Them 1 dong "[Build] - [ten-branch] - [preset]" o cuoi roi luu lai
+   ```
+7. Kéo xuống, bấm **"Commit new file"**
+
+Xong. Từ giờ chỉ cần sửa file này mỗi khi muốn build.
+
+---
+
+## 6. Dùng hằng ngày
+
+### 6.1. Khởi động tool trên máy build
+
+Nhấn đúp vào **`run.bat`**. Cửa sổ đen hiện ra và hiển thị:
+
+```
+   Tool dang theo doi repo. Khi co yeu cau build moi, no se tu build.
+   GIU CUA SO NAY MO. Nhan Ctrl+C de dung.
+```
+
+**Giữ cửa sổ này mở.** Đóng cửa sổ = tool dừng.
+(Muốn chạy ngầm không cần giữ cửa sổ → xem mục 8)
+
+### 6.2. Yêu cầu build
+
+Trên GitHub (từ máy nào cũng được, không cần ngồi máy build):
+
+1. Vào repo khách hàng → chuyển sang branch **`build-requests`**
+2. Bấm vào file **`Build_Infor.txt`**
+3. Bấm biểu tượng **cây bút chì** (Edit)
+4. **Thêm 1 dòng mới ở cuối**, theo đúng mẫu:
+
+   ```
+   [Build] - [ten-branch-can-build]
+   ```
+   hoặc, nếu muốn chỉ định cấu hình build cụ thể:
+   ```
+   [Build] - [ten-branch-can-build] - [Debug]
+   ```
+
+   Ví dụ thật:
+   ```
+   [Build] - [feature/them-nut-bam] - [Debug]
+   ```
+
+5. Bấm **"Commit changes"**
+
+**Trong vòng 60 giây**, máy build sẽ tự bắt đầu build.
+
+### 6.3. Quy tắc viết dòng yêu cầu
+
+| Quy tắc | Đúng | Sai |
+|---|---|---|
+| Phải có dấu ngoặc vuông | `[Build] - [develop]` | `Build - develop` |
+| Phải có dấu gạch ngang giữa các phần | `[Build] - [develop]` | `[Build] [develop]` |
+| Tên branch phải chính xác | `[Build] - [feature/abc]` | `[Build] - [Feature/ABC]` |
+| Dòng bắt đầu bằng `#` là ghi chú, bị bỏ qua | `# ghi chu` | — |
+| Nếu có nhiều dòng `[Build]`, **dòng cuối cùng** được dùng | — | — |
+
+---
+
+## 7. Lấy kết quả build ở đâu
+
+### Cách 1 — Trên GitHub (khuyên dùng)
+
+1. Vào repo khách hàng trên GitHub
+2. Bên phải màn hình, tìm mục **"Releases"** → bấm vào
+3. Bấm vào bản mới nhất → kéo xuống mục **"Assets"**
+4. Bấm vào file `.zip` để tải về
+
+### Cách 2 — Xem build thành công hay thất bại
+
+Vào trang commit của yêu cầu build, sẽ thấy:
+- ✅ **Dấu tick xanh** = build thành công
+- ❌ **Dấu X đỏ** = build thất bại
+- 🟡 **Chấm vàng** = đang build
+
+### Cách 3 — Ngay trên máy build
+
+Các file `.zip` cũng được lưu tại:
+```
+C:\build-watcher\data\artifacts\
+```
+
+### Nếu build lỗi thì xem chi tiết ở đâu
+
+Nhật ký chi tiết của từng lần build nằm ở:
+```
+C:\build-watcher\data\logs\
+```
+Mở file `.log` có tên trùng với branch bị lỗi để đọc thông báo lỗi.
+
+---
+
+## 8. Cho tool chạy ngầm (không cần giữ cửa sổ)
+
+Nếu muốn tool tự chạy kể cả khi không ai đăng nhập, dùng **Task Scheduler**
+có sẵn trong Windows.
+
+> ⚠️ **ĐIỀU QUAN TRỌNG NHẤT CỦA MỤC NÀY**
+>
+> Phải cấu hình chạy **dưới đúng tài khoản Windows đã đăng nhập GitHub ở
+> mục 2.1**. Nếu để mặc định (`SYSTEM`), tool sẽ **không tìm thấy thông tin
+> đăng nhập** và không đưa được kết quả lên GitHub.
+>
+> **Lý do**: Windows cất thông tin đăng nhập riêng cho từng tài khoản, giống
+> như mỗi người có 1 ngăn tủ khoá riêng. Tài khoản `SYSTEM` không có chìa
+> mở ngăn tủ của bạn.
+
+### Các bước
+
+1. Nhấn phím **Windows**, gõ `Task Scheduler`, mở lên
+2. Bên phải, bấm **"Create Task..."** (KHÔNG phải "Create Basic Task")
+3. Tab **General**:
+   - Name: `build-watcher`
+   - Bấm **"Change User or Group..."** → gõ đúng tên tài khoản Windows của
+     bạn → OK
+   - Chọn **"Run whether user is logged on or not"**
+   - ✅ Tích **"Run with highest privileges"**
+4. Tab **Triggers** → **New...**:
+   - Begin the task: **"At startup"** → OK
+5. Tab **Actions** → **New...**:
+   - Action: `Start a program`
+   - Program/script: `C:\build-watcher\python\python.exe`
+   - Add arguments: `-m build_watcher --config C:\build-watcher\config.json run`
+   - Start in: `C:\build-watcher`
+   - → OK
+6. Tab **Settings**:
+   - ✅ Tích **"If the task fails, restart every: 1 minute"**
+   - ❌ **BỎ tích** "Stop the task if it runs longer than..."
+7. Bấm **OK** → Windows sẽ hỏi **mật khẩu Windows** của tài khoản bạn → nhập vào
+
+### Kiểm tra tool có đang chạy không
+
+Mở Task Manager (Ctrl+Shift+Esc) → tab **Details** → tìm `python.exe`.
+
+---
+
+## 9. Khắc phục sự cố
+
+### 9.1. Bảng tra nhanh
+
+| Hiện tượng | Nguyên nhân | Cách sửa |
+|---|---|---|
+| `LOI: Khong tim thay Git` | Chưa cài Git | Cài Git, **đóng cửa sổ, mở lại**, chạy lại `setup.bat` |
+| `CANH BAO: Chua tim thay thong tin dang nhap GitHub` | Chưa làm mục 2.1 | Làm theo mục 2.1 |
+| `LOI: Khong tai duoc Python` | Mạng công ty chặn python.org | Xem 9.2 |
+| `unknown revision or path` / `ambiguous argument` | Chưa tạo branch `build-requests` trên GitHub | Làm theo mục 5 |
+| Đẩy yêu cầu lên rồi mà không thấy build | Xem 9.3 | |
+| `cannot open ... for writing: No such file or directory` khi build | Đường dẫn quá dài | Chuyển thư mục về `C:\build-watcher` (mục 4.1) |
+| Build chạy nhưng không thấy Release trên GitHub | Xem 9.4 | |
+| `403` hoặc `Forbidden` trong nhật ký | Tài khoản không đủ quyền ghi vào repo | Nhờ khách cấp quyền Write (không phải Admin) |
+
+### 9.2. Mạng công ty chặn tải Python
+
+Nếu `setup.bat` báo không tải được Python:
+
+1. Dùng máy khác (hoặc điện thoại) tải file này về:
+   ```
+   https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip
+   ```
+2. Chép file `.zip` sang máy build
+3. Giải nén **toàn bộ nội dung** vào thư mục: `C:\build-watcher\python`
+   (sau khi giải nén phải thấy file `python.exe` nằm ngay trong thư mục đó)
+4. Chạy lại `setup.bat`
+
+### 9.3. Đã đẩy yêu cầu lên nhưng không thấy build
+
+Kiểm tra theo thứ tự:
+
+1. **Tool có đang chạy không?** Cửa sổ `run.bat` còn mở không?
+2. **Đây có phải lần chạy đầu tiên không?**
+   → Lần đầu tiên tool chỉ ghi nhớ vị trí hiện tại, **không build**.
+   Hãy đẩy thêm 1 yêu cầu **mới** nữa.
+3. **Dòng yêu cầu có viết đúng mẫu không?** Xem lại mục 6.3.
+4. **Đã đợi đủ 60 giây chưa?**
+5. **Sửa file đúng branch chưa?** Phải là branch `build-requests`.
+6. Mở file nhật ký `C:\build-watcher\data\logs\build-watcher.log`, xem
+   dòng cuối cùng ghi gì.
+
+### 9.4. Build xong nhưng không có Release trên GitHub
+
+Mở `C:\build-watcher\data\logs\build-watcher.log`, tìm dòng có chữ `ERROR`:
+
+| Trong nhật ký thấy | Nghĩa là | Cách sửa |
+|---|---|---|
+| `no GitHub token` | Chưa đăng nhập GitHub, hoặc đang chạy dưới sai tài khoản Windows | Làm mục 2.1; nếu chạy bằng Task Scheduler thì kiểm tra lại mục 8 |
+| `HTTP 403` | Tài khoản không có quyền ghi | Nhờ khách cấp quyền **Write** cho tài khoản |
+| `HTTP 404` | Sai tên repo trong `config.json` | Chạy lại `setup.bat` |
+| `[no-github]` | Đang tắt tính năng báo cáo | Sửa `config.json`, đổi `"report_to_github": false` thành `true` |
+
+### 9.5. Muốn build lại đúng yêu cầu cũ
+
+Tool chỉ build các yêu cầu **mới**. Muốn build lại, hãy sửa `Build_Infor.txt`
+thêm 1 dòng ghi chú bất kỳ rồi commit lại — như vậy tạo ra yêu cầu mới.
+
+---
+
+## 10. Đổi sang repo khác / máy khác
+
+### 10.1. Đổi sang repo khác (cùng máy)
+
+**Cách dễ nhất**: chạy lại `setup.bat`, nó sẽ hỏi lại từ đầu và ghi đè cấu hình.
+
+**Hoặc** sửa tay file `config.json` (mở bằng Notepad), đổi 3 dòng:
+
+```json
+"repo_url": "https://github.com/CHU-REPO-MOI/TEN-REPO-MOI.git",
+"owner": "CHU-REPO-MOI",
+"repo": "TEN-REPO-MOI",
+```
+
+Sau khi đổi, **phải xoá 2 thứ** để tool bắt đầu lại từ đầu:
+- Thư mục `C:\build-watcher\data\repo`
+- File `C:\build-watcher\data\state.json`
+
+Rồi chạy `check.bat` để kiểm tra.
+
+### 10.2. Đem sang máy khác
+
+Không chép thư mục cũ sang. Làm lại từ đầu cho sạch:
+
+1. Chép thư mục `build-watcher` **gốc** (chưa cài) sang máy mới
+2. **Xoá** thư mục `python` và `data`, và file `config.json` nếu có
+3. Làm mục 2.1 (đăng nhập GitHub trên máy mới)
+4. Chạy `setup.bat`
+
+### 10.3. Bảng tra: cần đổi gì khi nào
+
+| Tình huống | Cần làm gì |
+|---|---|
+| Đổi repo | Chạy lại `setup.bat` |
+| Đổi tên branch chứa yêu cầu | Sửa `"trigger_branch"` trong `config.json` |
+| Dự án dùng file build tên khác | Sửa `"build_script"` trong `config.json` |
+| Dự án sinh file kết quả ở chỗ khác | Sửa `"artifact_globs"` trong `config.json` |
+| Muốn build nhanh/chậm hơn | Sửa `"poll_interval_seconds"` (tính bằng giây) |
+| Muốn giới hạn ai được build | Sửa `"allowed_committers"`, thay `"*"` bằng danh sách email |
+| Đổi máy | Làm lại từ đầu theo 10.2 |
+
+> **Không bao giờ cần sửa file nào trong thư mục `build_watcher/`.**
+> Mọi thay đổi đều nằm trong `config.json`.
+
+---
+
+## 11. Các phương án dự phòng
+
+Nếu gặp trở ngại không vượt qua được, đây là các phương án thay thế theo thứ
+tự ưu tiên:
+
+### Phương án A — Không đưa kết quả lên GitHub (dùng khi không đăng nhập được)
+
+Mở `config.json`, đổi:
+```json
+"report_to_github": false
+```
+
+Kết quả: tool vẫn tự động build, vẫn tạo file `.zip`, nhưng **không** đưa lên
+GitHub. Bạn lấy file ở `C:\build-watcher\data\artifacts\`.
+
+| Vẫn hoạt động | Mất đi |
+|---|---|
+| Tự phát hiện yêu cầu build | Dấu tick xanh/đỏ trên GitHub |
+| Tự tải code, tự build | File .zip trên mục Releases |
+| Tự đóng gói file .zip | |
+
+### Phương án B — Dùng token thủ công (nếu cách tự động không chạy)
+
+Chỉ dùng khi mục 2.1 không thực hiện được:
+
+1. Vào `https://github.com/settings/tokens` (Settings **của tài khoản bạn**,
+   không phải của repo khách hàng)
+2. Tạo token mới với quyền `repo`
+3. Trên máy build, mở Command Prompt **as Administrator**, chạy:
+   ```
+   setx BUILD_WATCHER_GITHUB_TOKEN "dan-token-vao-day" /M
+   ```
+4. Khởi động lại máy (hoặc khởi động lại tác vụ trong Task Scheduler)
+
+### Phương án C — Chạy tay khi cần
+
+Không cho tool chạy liên tục. Mỗi khi cần build, nhấn đúp `build-once.bat`.
+
+---
+
+## 12. Checklist in ra mang theo
+
+```
+[ ] BƯỚC 1: Kiểm tra Git
+        Mở Command Prompt, gõ:  git --version
+        → Phải hiện số phiên bản
+
+[ ] BƯỚC 2: Đăng nhập GitHub (làm 1 lần)
+        git clone https://github.com/____/____.git C:\test-clone
+        → Trình duyệt hiện ra, đăng nhập
+        → Xoá thư mục C:\test-clone
+        → GHI NHỚ đang dùng tài khoản Windows nào: ______________
+
+[ ] BƯỚC 3: Chép thư mục build-watcher vào  C:\build-watcher
+        (Đường dẫn phải NGẮN, không để trong Desktop/Documents)
+
+[ ] BƯỚC 4: Nhấn đúp  setup.bat
+        Trả lời:
+          - Địa chỉ repo: https://github.com/____/____
+          - Các câu còn lại: nhấn Enter
+        → Chờ thấy dòng  "CAI DAT HOAN TAT"
+
+[ ] BƯỚC 5: Trên GitHub, tạo branch  build-requests
+        và file  Build_Infor.txt  trong branch đó
+
+[ ] BƯỚC 6: Nhấn đúp  check.bat
+        → Phải thấy  "TAT CA DEU TOT"
+
+[ ] BƯỚC 7: Nhấn đúp  build-once.bat  (lần 1)
+        → Sẽ báo "processed 0 request" — ĐÂY LÀ ĐÚNG
+
+[ ] BƯỚC 8: Trên GitHub, sửa Build_Infor.txt, thêm dòng:
+        [Build] - [ten-branch-that] - [Debug]
+        rồi Commit
+
+[ ] BƯỚC 9: Nhấn đúp  build-once.bat  (lần 2)
+        → Phải thấy dòng kết thúc bằng  "-> ok"
+
+[ ] BƯỚC 10: Vào GitHub, mục Releases
+        → Phải thấy file .zip vừa build
+
+[ ] BƯỚC 11: Nhấn đúp  run.bat  để chạy liên tục
+        (hoặc cấu hình Task Scheduler theo mục 8)
+```
+
+---
+
+## 13. Dành cho người kỹ thuật
+
+### 13.1. Cấu trúc mã nguồn
+
+Mỗi module có phần giao tiếp nhỏ, phần thân dày, và có thể thay thế bằng
+bản giả lập khi kiểm thử:
+
+| Module | Giao tiếp | Che giấu điều gì |
+|---|---|---|
+| `git_repo.GitRepo` | `fetch` `remote_head` `ref_exists` `commits_touching` `file_at` `worktree` | toàn bộ lệnh git, phân tích kết quả, vòng đời worktree |
+| `github_client.GitHubClient` | `set_commit_status` `publish_artifact` | xác thực, thử lại, xử lý release trùng tag |
+| `git_credentials` | `fill_credential` `host_from_url` | mượn credential của git, chặn treo |
+| `state.StateStore` | `last_sha` `advance` | ghi nguyên tử, phục hồi khi file hỏng |
+| `request_format` | `parse_build_request` | định dạng, chống tiêm tham số vào git |
+| `builder.Builder` | `run` | tìm script, gọi qua cmd.exe, hết giờ, ghi nhật ký |
+| `packager.Packager` | `package` | tìm file kết quả, đặt tên zip |
+| `pipeline.BuildPipeline` | `process` | trình tự, đảm bảo luôn kết thúc bằng đúng 1 trạng thái |
+| `watcher.Watcher` | `poll_once` `run_forever` | vòng lặp, khôi phục, giãn nhịp khi lỗi |
+
+### 13.2. Các quyết định thiết kế đáng lưu ý
 
 | Quyết định | Lý do |
 |---|---|
-| Duyệt **commit** đã chạm file, không đọc **nội dung hiện tại** của file | 2 lần push giữa 2 chu kỳ poll vẫn ra 2 build. Nếu đọc nội dung hiện tại, request đầu biến mất im lặng. Đây là bug khó phát hiện nhất của thiết kế polling ngây thơ |
-| Request **không** chứa đường dẫn script | Nếu chứa, bất kỳ ai push được vào trigger branch đều chạy được lệnh tuỳ ý trên máy build. Script do config của máy build quyết định |
-| Allowlist email người commit | Thay cho `author_association` mà GitHub Actions cấp sẵn — pull-based không có sẵn thứ đó |
-| 1 tiến trình, 1 vòng lặp tuần tự | 1 máy build thì không có gì để song song, nhưng có cả 1 lớp bug checkout đè nhau để tránh |
-| Lưu artifact ở **Releases**, không commit zip vào branch | Commit zip làm `.git` phình vô hạn theo thời gian |
-| Commit Status API | Thay cho dấu tick xanh của Actions, không cần quyền Settings |
-| `advance(sha)` sau **mỗi** request | Crash giữa batch thì resume đúng chỗ, không build lại cái đã xong |
-| Chỉ dùng **stdlib** Python | Máy khách hàng thường chặn `pip install`. Không cần cài thêm gói nào |
+| Duyệt **git log** các commit chạm file, không đọc nội dung file hiện tại | 2 lần push liên tiếp giữa 2 chu kỳ vẫn ra 2 build, không mất |
+| Tên script build lấy từ config máy, **không** từ nội dung request | Nội dung repo là dữ liệu không đáng tin — không cho nó chọn lệnh chạy |
+| Mỗi build 1 worktree riêng, xoá sau khi xong | Tránh lẫn cache build giữa các branch → tránh ra firmware sai mà không báo lỗi |
+| `target_commitish` = SHA thật đã checkout | Nếu bỏ trống, GitHub gắn tag vào branch mặc định — sai một cách âm thầm |
+| Token mượn qua `git credential fill` | Không cần tạo PAT, không đụng trang Settings nào |
+| `GCM_INTERACTIVE=never` + timeout | Nếu chưa có credential, GCM có thể mở trình duyệt và treo vô hạn |
+| Chỉ dùng thư viện chuẩn của Python | Máy khách hàng thường chặn `pip install` |
+| Không dùng `for /f` với lệnh trong `setup.bat` | Cách viết đó nuốt mất bàn phím người dùng — đã kiểm chứng |
 
-## Cấu trúc module
+### 13.3. Chạy kiểm thử
 
-Mỗi module là 1 *deep module*: interface nhỏ, phần thân dày. Thứ tự dưới đây
-cũng là thứ tự phụ thuộc (trên không biết gì về dưới).
-
-| Module | Interface | Giấu đi điều gì |
-|---|---|---|
-| `git_repo.GitRepo` | `fetch` `remote_head` `ref_exists` `commits_touching` `file_at` `worktree` | subprocess git, parse output, vòng đời worktree |
-| `github_client.GitHubClient` | `set_commit_status` `publish_artifact` | token, retry/backoff, release đã tồn tại, upload asset |
-| `state.StateStore` | `last_sha` `advance` | ghi atomic, khôi phục khi file hỏng |
-| `request_format` | `parse_build_request` | format, validate chống option-injection |
-| `builder.Builder` | `run` | tìm script, gọi qua cmd.exe, timeout, capture log |
-| `packager.Packager` | `package` | tìm artifact theo glob, đặt tên zip |
-| `pipeline.BuildPipeline` | `process` | trình tự + đảm bảo **luôn** kết thúc bằng đúng 1 status |
-| `watcher.Watcher` | `poll_once` `run_forever` | poll, resume, backoff |
-| `app.build_watcher` | — | composition root: nơi duy nhất biết adapter nào lắp vào seam nào |
-
-Hai seam thật (mỗi cái có 2 adapter): `GitRepo` ↔ `FakeRepo`,
-`GitHubClient` ↔ `NullGitHubClient`. Test chạy đúng `Watcher`/`BuildPipeline`
-thật, chỉ thay adapter — không mock nội bộ.
-
-## Python có bị policy chặn không?
-
-Câu hỏi này quan trọng vì setup self-hosted runner trước đây từng bị
-**PowerShell Execution Policy** chặn. Trả lời ngắn: **Execution Policy không
-áp dụng cho Python** — nó chỉ chi phối `.ps1`. Nhưng có những cơ chế khác
-*có thể* chặn, cần kiểm tra trên từng máy khách hàng:
-
-| Cơ chế | Có chặn Python không? | Cách kiểm tra |
-|---|---|---|
-| PowerShell Execution Policy | **Không** — chỉ áp dụng cho `.ps1` | `Get-ExecutionPolicy -List` |
-| AppLocker | **Có thể** — rule nhóm `Exe` chặn được `python.exe` (nhóm `Script` mặc định không bao gồm `.py`) | `Get-Service AppIDSvc`; `Get-AppLockerPolicy -Effective` |
-| Software Restriction Policies | **Có thể** — chỉ khi `DefaultLevel` được đặt | `Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Safer\CodeIdentifiers"` |
-| WDAC / Device Guard | **Có thể** — chặn theo chữ ký/hash | `Get-CimInstance Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard` |
-| Antivirus / EDR | **Có thể** — quarantine `python.exe` mới tải về | Hỏi đội bảo mật khách hàng |
-| Chặn cài đặt (MSI/Store) | Né được bằng bản **embeddable** | `HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer` |
-
-**Vì sao dùng bản embeddable zip**: không cần installer, không cần quyền
-admin, không ghi registry, không cần `pip`. Chỉ giải nén là chạy. Điều này
-chỉ khả thi vì tool viết **stdlib-only** — đó là lý do thật sự của ràng buộc
-đó, không phải sở thích.
-
-> Nếu máy khách hàng chặn cả `python.exe` ở mức AppLocker/WDAC thì mọi
-> phương án script đều tắc như nhau (PowerShell còn tắc sớm hơn vì
-> Execution Policy). Lúc đó phương án còn lại là xin whitelist theo đường
-> dẫn/hash cho `python.exe`, hoặc biên dịch tool thành 1 `.exe` duy nhất
-> rồi xin whitelist cho file đó.
-
-## Token: không cần tạo thủ công, không đụng bất kỳ trang Settings nào
-
-**Ràng buộc cứng của tool này**: không được yêu cầu truy cập bất kỳ trang
-`.../settings` nào — kể cả `github.com/settings/tokens` (Settings tài khoản
-bạn, dù không do khách quản lý) — vì tool phải triển khai lặp lại trên nhiều
-máy/tài khoản khác nhau, không thể coi "1 lần tạo token thủ công" là chi phí
-chấp nhận được ở mọi nơi.
-
-**Giải pháp: mượn credential mà `git push` đã dùng sẵn.** Máy nào `git push`
-lên repo đó chạy được (điều kiện tiên quyết để deploy tool này), máy đó đã
-có sẵn credential trong Git Credential Manager / OS credential store — thứ
-người dùng có được qua **đăng nhập trình duyệt (OAuth) khi push lần đầu**,
-không phải qua trang Settings tạo token thủ công. Tool tự lấy credential đó
-bằng lệnh `git credential fill` (plumbing command chuẩn của git, chính là
-cách `git push` tự lấy credential nội bộ) và dùng luôn cho Commit Status +
-Releases API — không tạo token mới, không có bước setup nào thêm ngoài
-"đảm bảo `git push` chạy được", điều vốn đã là điều kiện bắt buộc.
-
-Đã kiểm chứng thật trên `DoQuocViet1110/Git-GitHub-learning`: `check` và
-`once` chạy pass với `report_to_github: true` mà **không đặt
-`BUILD_WATCHER_GITHUB_TOKEN`** — Release và Commit Status xuất hiện thật
-trên GitHub, xác nhận qua API đọc riêng.
-
-**Thứ tự tool tìm token** (`config.read_token`):
-1. Tham số truyền thẳng (dùng nội bộ/test)
-2. Biến môi trường `BUILD_WATCHER_GITHUB_TOKEN` (escape hatch cho ai muốn
-   chủ động, ví dụ máy không có git credential sẵn)
-3. **Mượn qua `git credential fill`** cho đúng host của `repo_url` — mặc
-   định, không cần làm gì thêm
-
-Không nguồn nào có → lỗi rõ ràng, gợi ý đặt biến môi trường hoặc đảm bảo
-`git push` chạy được.
-
-### Vì sao an toàn hơn tự tạo classic PAT
-
-Tool **không tự quyết định phạm vi quyền** — nó dùng đúng credential máy đã
-có, với đúng quyền tài khoản đó vốn được cấp trên repo. Nếu bạn lo credential
-đó có phạm vi quá rộng (ví dụ dùng chung 1 tài khoản cho nhiều khách hàng),
-lời khuyên vẫn giữ nguyên: nên có 1 tài khoản GitHub riêng cho việc build,
-được add làm collaborator **đúng 1 repo** — nhưng khác trước, bạn **không
-cần tạo token cho tài khoản đó**, chỉ cần đăng nhập `git push` một lần trên
-máy build bằng tài khoản đó (qua trình duyệt), xong.
-
-### Chặn treo khi máy chưa từng đăng nhập git
-
-`fill_credential` set cả `GIT_TERMINAL_PROMPT=0` lẫn `GCM_INTERACTIVE=never`
-trước khi gọi `git credential fill` — thiếu dòng thứ 2, Git Credential
-Manager có thể tự mở trình duyệt xin đăng nhập khi chưa có credential cache,
-treo vô thời hạn trên 1 service chạy nền không ai ngồi trước màn hình. Có
-`timeout` (mặc định 15s) làm lớp chặn cuối, nhưng 2 biến môi trường trên mới
-là thứ ngăn treo xảy ra ngay từ đầu.
-
-### Chạy khi máy chưa từng `git push` được / không muốn dùng token nào cả
-
-Đặt `"report_to_github": false` trong config: tool vẫn poll, checkout, build
-và tạo zip trong `artifact_dir` — chỉ không báo ngược lên GitHub, và không
-cần bất kỳ credential nào ngoài quyền **đọc** repo để fetch.
-
-| Chức năng | `report_to_github: false` |
-|---|---|
-| Phát hiện request, checkout, build, đóng gói zip | ✅ vẫn chạy |
-| Dấu ✅/❌ trên commit | ❌ mất |
-| Upload zip lên Releases | ❌ mất — tự lấy ở `artifact_dir` |
-
-## Cài đặt trên máy build
-
-**Yêu cầu**: Python 3.8+ (bản **Windows**, không phải cygwin — cygwin khác
-path semantics), git, và toolchain build của project (CMake/Ninja/ARM GCC —
-xem `doc/GithubActions/GithubActions_Setup.md`).
-
-```powershell
-# 0) Cài Python embeddable (khong can admin, khong ghi registry)
-$dst = "C:\build-watcher\python"
-New-Item -ItemType Directory -Force -Path $dst | Out-Null
-Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip" -OutFile "$env:TEMP\py.zip" -UseBasicParsing
-Expand-Archive "$env:TEMP\py.zip" -DestinationPath $dst -Force
-# Ban embeddable co ay sys.path; phai them thu muc app vao ._pth
-Add-Content "$dst\python312._pth" "C:\build-watcher\app"
-
-# 1) Chép thư mục này vào máy build
-Copy-Item -Recurse tools\build-watcher C:\build-watcher\app
-
-# 2) Tạo config từ mẫu
-Copy-Item C:\build-watcher\app\config.example.json C:\build-watcher\config.json
-notepad C:\build-watcher\config.json   # sửa owner/repo/trigger_branch/allowed_committers
-
-# 3) Đặt token (fine-grained PAT, chỉ Contents + Commit statuses read/write)
-[Environment]::SetEnvironmentVariable("BUILD_WATCHER_GITHUB_TOKEN", "<token>", "Machine")
-
-# 4) Kiểm tra setup trước khi chạy thật
-cd C:\build-watcher\app
-python -m build_watcher --config C:\build-watcher\config.json check
-
-# 5) Chạy thử 1 vòng, không đụng gì tới GitHub
-python -m build_watcher --config C:\build-watcher\config.json --dry-run once
-
-# 6) Chạy thật
-python -m build_watcher --config C:\build-watcher\config.json run
+```
+cd C:\build-watcher
+python\python.exe -m unittest discover -s tests -t .
 ```
 
-> Token đọc từ biến môi trường cấp **Machine** — Windows Service không thấy
-> User PATH/biến môi trường của tài khoản đăng nhập. Cùng đúng 1 bài học đã
-> gặp khi setup self-hosted runner trước đây: đổi biến môi trường xong phải
-> **restart service**, vì service chỉ nạp môi trường 1 lần lúc khởi động.
+### 13.4. Đã kiểm chứng những gì
 
-> ⚠️ **Giữ `root` ngắn** (mặc định `C:\build-watcher`). Build chạy trong
-> `<root>\work\wt-<12 hex>\`, và project C nhiều tầng thư mục còn thêm
-> ~120 ký tự nữa — vượt giới hạn **MAX_PATH 260 ký tự** của Windows là
-> compiler báo lỗi kiểu `cannot open ... .su for writing: No such file or
-> directory`, rất khó đoán ra nguyên nhân. Lệnh `check` sẽ cảnh báo nếu
-> đường dẫn workspace quá dài. Đây là lỗi đã gặp thật khi test tool này.
-
-## Chuẩn bị phía repo khách hàng
-
-Chỉ cần 1 branch và 1 file — không đụng Settings:
-
-```bash
-git checkout --orphan build-requests
-git rm -rf .
-cp Build_Infor.example.txt Build_Infor.txt
-git add Build_Infor.txt && git commit -m "chore: add build request file"
-git push -u origin build-requests
-```
-
-Sau đó, mỗi lần muốn build: thêm 1 dòng vào cuối `Build_Infor.txt` rồi push.
-
-## Chạy nền như Windows Service
-
-Dùng NSSM (đơn giản nhất, không cần code thêm):
-
-```powershell
-nssm install BuildWatcher "C:\Python312\python.exe" "-m build_watcher --config C:\build-watcher\config.json run"
-nssm set BuildWatcher AppDirectory "C:\build-watcher\app"
-nssm set BuildWatcher Start SERVICE_AUTO_START
-nssm start BuildWatcher
-```
-
-## Test
-
-```bash
-python -m unittest discover -s tests -t .
-```
-
-## Đã kiểm chứng trên máy thật
-
-Chạy end-to-end trên Windows 10 Pro với Python 3.12.10 embeddable, dùng 1
-bare repo đóng vai repo khách hàng và branch `feature/Github_Actions_V2`
-thật của project này:
+Chạy thật trên Windows 10 Pro, Python 3.12.10 bản rút gọn, repo GitHub thật:
 
 | Kiểm chứng | Kết quả |
 |---|---|
-| 36 unit test trên Windows Python | pass |
-| `check` — clone, đọc trigger branch, tìm request file | pass |
-| Lần poll đầu tiên chỉ baseline, không build lại lịch sử | pass |
-| Push **2 request liên tiếp** giữa 2 lần poll | cả 2 đều được build, không mất cái nào |
-| Request từ email ngoài allowlist | bị chặn **trước khi** chạm builder, có status failure |
-| Build thất bại thật (MAX_PATH) | báo failure kèm exit code, ghi log, **không** publish artifact |
-| Build thành công | zip đúng 4 file `.elf/.hex/.bin/.map`, worktree được dọn sạch |
-| Chế độ `report_to_github: false`, **không có token nào** | build thật chạy xong, zip được tạo, không gọi GitHub |
-| `report_to_github: true`, **không đặt `BUILD_WATCHER_GITHUB_TOKEN`**, token mượn qua `git credential fill` | Release + Commit Status xuất hiện thật trên GitHub, xác nhận qua API đọc riêng — **không đụng bất kỳ trang Settings nào** |
+| 54 bài kiểm thử tự động | đạt |
+| Cài từ thư mục sạch bằng `setup.bat` | đạt, gồm cả tải Python và tạo config |
+| Đẩy 2 yêu cầu liên tiếp giữa 2 chu kỳ | cả 2 đều build, không mất |
+| Yêu cầu từ email ngoài danh sách | bị chặn trước khi build |
+| Build thất bại thật | báo lỗi đúng, không tạo Release |
+| Build thành công | zip đúng 4 file, worktree được dọn |
+| Đưa lên GitHub **không cần token thủ công** | Release + Commit Status xuất hiện thật |
+| `target_commitish` trỏ đúng commit đã build | xác nhận lại qua API |
 
-Phần **chưa** kiểm chứng: đường đi HTTP thật tới GitHub (`GitHubClient`) —
-mọi lần chạy trên đều dùng `--dry-run`, tức `NullGitHubClient`. Cần 1 token
-thật để kiểm chứng nốt việc tạo Release và đặt Commit Status.
+### 13.5. Còn thiếu
 
-## Còn thiếu (roadmap)
-
-- [ ] Heartbeat định kỳ để biết máy build còn sống (pull-based không có
-      "chấm xanh Idle" như trang Runners của Actions)
-- [ ] Dọn artifact/log cũ theo tuổi
-- [ ] Chạy như Windows Service và kiểm chứng lại dưới tài khoản service
-      (PATH/quyền/credential store khác với tài khoản đăng nhập tương tác —
-      GCM lưu credential theo user profile, cần xác nhận service account
-      thấy được đúng credential đã đăng nhập — xem bài học mục 10.2 của
-      `GithubActions_Setup.md` về việc service cache môi trường lúc khởi
-      động)
+- Chưa kiểm chứng khi chạy dưới Task Scheduler với tài khoản service
+  (rủi ro: kho credential theo từng tài khoản Windows — xem mục 8)
+- Chưa kiểm chứng trên mạng công ty (proxy, tường lửa, phần mềm diệt virus)
+- Chưa có cơ chế báo "tool còn sống hay đã treo"
+- Chưa tự dọn file kết quả và nhật ký cũ
