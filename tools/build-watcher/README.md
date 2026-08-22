@@ -97,46 +97,63 @@ chỉ khả thi vì tool viết **stdlib-only** — đó là lý do thật sự 
 > dẫn/hash cho `python.exe`, hoặc biên dịch tool thành 1 `.exe` duy nhất
 > rồi xin whitelist cho file đó.
 
-## Token: cần loại nào, và vì sao
+## Token: không cần tạo thủ công, không đụng bất kỳ trang Settings nào
 
-Tool cần token cho 2 việc: đọc code repo private, và báo ngược kết quả lên
-GitHub (Commit Status + Release). **Không** cần quyền Settings của repo khách
-hàng — token được tạo từ **Settings tài khoản của bạn**, và quyền nó mang
-theo không vượt quá quyền bạn vốn có với tư cách collaborator.
+**Ràng buộc cứng của tool này**: không được yêu cầu truy cập bất kỳ trang
+`.../settings` nào — kể cả `github.com/settings/tokens` (Settings tài khoản
+bạn, dù không do khách quản lý) — vì tool phải triển khai lặp lại trên nhiều
+máy/tài khoản khác nhau, không thể coi "1 lần tạo token thủ công" là chi phí
+chấp nhận được ở mọi nơi.
 
-Loại token phụ thuộc repo khách nằm ở đâu:
+**Giải pháp: mượn credential mà `git push` đã dùng sẵn.** Máy nào `git push`
+lên repo đó chạy được (điều kiện tiên quyết để deploy tool này), máy đó đã
+có sẵn credential trong Git Credential Manager / OS credential store — thứ
+người dùng có được qua **đăng nhập trình duyệt (OAuth) khi push lần đầu**,
+không phải qua trang Settings tạo token thủ công. Tool tự lấy credential đó
+bằng lệnh `git credential fill` (plumbing command chuẩn của git, chính là
+cách `git push` tự lấy credential nội bộ) và dùng luôn cho Commit Status +
+Releases API — không tạo token mới, không có bước setup nào thêm ngoài
+"đảm bảo `git push` chạy được", điều vốn đã là điều kiện bắt buộc.
 
-| Repo khách hàng | Token dùng được | Vì sao |
-|---|---|---|
-| Thuộc **Organization** | Fine-grained PAT (org phải đã bật cho phép) | Chọn được đúng repo + đúng quyền |
-| Thuộc **tài khoản cá nhân** của khách | **Bắt buộc classic PAT** | Fine-grained PAT không trỏ được vào repo cá nhân của người khác |
+Đã kiểm chứng thật trên `DoQuocViet1110/Git-GitHub-learning`: `check` và
+`once` chạy pass với `report_to_github: true` mà **không đặt
+`BUILD_WATCHER_GITHUB_TOKEN`** — Release và Commit Status xuất hiện thật
+trên GitHub, xác nhận qua API đọc riêng.
 
-**Nếu là repo cá nhân — đừng dùng classic PAT của tài khoản chính.** Classic
-PAT chỉ có scope thô `repo`, tức toàn quyền trên **mọi** repo mà tài khoản đó
-truy cập được, gồm cả repo của các khách hàng khác. Token này lại nằm thường
-trực trên máy khách hàng này.
+**Thứ tự tool tìm token** (`config.read_token`):
+1. Tham số truyền thẳng (dùng nội bộ/test)
+2. Biến môi trường `BUILD_WATCHER_GITHUB_TOKEN` (escape hatch cho ai muốn
+   chủ động, ví dụ máy không có git credential sẵn)
+3. **Mượn qua `git credential fill`** cho đúng host của `repo_url` — mặc
+   định, không cần làm gì thêm
 
-Cách xử lý đúng — **machine account**:
+Không nguồn nào có → lỗi rõ ràng, gợi ý đặt biến môi trường hoặc đảm bảo
+`git push` chạy được.
 
-1. Tạo 1 tài khoản GitHub riêng cho việc build (ví dụ `xxx-buildbot`)
-2. Nhờ khách add tài khoản đó làm **collaborator** vào đúng repo đó
-3. Tạo classic PAT **từ tài khoản buildbot**
+### Vì sao an toàn hơn tự tạo classic PAT
 
-| Phương án | Phạm vi nếu token lộ | Cần khách làm gì |
-|---|---|---|
-| Classic PAT từ tài khoản bạn | Mọi repo bạn truy cập được ⚠️ | Không |
-| Classic PAT từ machine account | Đúng 1 repo ✅ | Add 1 collaborator |
+Tool **không tự quyết định phạm vi quyền** — nó dùng đúng credential máy đã
+có, với đúng quyền tài khoản đó vốn được cấp trên repo. Nếu bạn lo credential
+đó có phạm vi quá rộng (ví dụ dùng chung 1 tài khoản cho nhiều khách hàng),
+lời khuyên vẫn giữ nguyên: nên có 1 tài khoản GitHub riêng cho việc build,
+được add làm collaborator **đúng 1 repo** — nhưng khác trước, bạn **không
+cần tạo token cho tài khoản đó**, chỉ cần đăng nhập `git push` một lần trên
+máy build bằng tài khoản đó (qua trình duyệt), xong.
 
-Yêu cầu "add 1 collaborator" nhẹ hơn hẳn "cho tôi vào Settings" — khách vẫn
-giữ nguyên quyền kiểm soát repo. Dù chọn cách nào, đặt **hạn 90 ngày** và
-xoay vòng; classic PAT cho phép để vĩnh viễn, đừng làm vậy.
+### Chặn treo khi máy chưa từng đăng nhập git
 
-### Chạy khi chưa có token
+`fill_credential` set cả `GIT_TERMINAL_PROMPT=0` lẫn `GCM_INTERACTIVE=never`
+trước khi gọi `git credential fill` — thiếu dòng thứ 2, Git Credential
+Manager có thể tự mở trình duyệt xin đăng nhập khi chưa có credential cache,
+treo vô thời hạn trên 1 service chạy nền không ai ngồi trước màn hình. Có
+`timeout` (mặc định 15s) làm lớp chặn cuối, nhưng 2 biến môi trường trên mới
+là thứ ngăn treo xảy ra ngay từ đầu.
+
+### Chạy khi máy chưa từng `git push` được / không muốn dùng token nào cả
 
 Đặt `"report_to_github": false` trong config: tool vẫn poll, checkout, build
-và tạo zip trong `artifact_dir` — chỉ không báo ngược lên GitHub. Dùng để
-triển khai ngay trong lúc còn thu xếp token, hoặc cho máy vĩnh viễn không
-được cấp token.
+và tạo zip trong `artifact_dir` — chỉ không báo ngược lên GitHub, và không
+cần bất kỳ credential nào ngoài quyền **đọc** repo để fetch.
 
 | Chức năng | `report_to_github: false` |
 |---|---|
@@ -239,6 +256,7 @@ thật của project này:
 | Build thất bại thật (MAX_PATH) | báo failure kèm exit code, ghi log, **không** publish artifact |
 | Build thành công | zip đúng 4 file `.elf/.hex/.bin/.map`, worktree được dọn sạch |
 | Chế độ `report_to_github: false`, **không có token nào** | build thật chạy xong, zip được tạo, không gọi GitHub |
+| `report_to_github: true`, **không đặt `BUILD_WATCHER_GITHUB_TOKEN`**, token mượn qua `git credential fill` | Release + Commit Status xuất hiện thật trên GitHub, xác nhận qua API đọc riêng — **không đụng bất kỳ trang Settings nào** |
 
 Phần **chưa** kiểm chứng: đường đi HTTP thật tới GitHub (`GitHubClient`) —
 mọi lần chạy trên đều dùng `--dry-run`, tức `NullGitHubClient`. Cần 1 token
@@ -246,11 +264,12 @@ thật để kiểm chứng nốt việc tạo Release và đặt Commit Status.
 
 ## Còn thiếu (roadmap)
 
-- [ ] Kiểm chứng `GitHubClient` với token thật (Release + Commit Status)
 - [ ] Heartbeat định kỳ để biết máy build còn sống (pull-based không có
       "chấm xanh Idle" như trang Runners của Actions)
 - [ ] Dọn artifact/log cũ theo tuổi
-- [ ] Đọc token từ Windows Credential Manager thay vì biến môi trường
 - [ ] Chạy như Windows Service và kiểm chứng lại dưới tài khoản service
-      (PATH/quyền khác với tài khoản đăng nhập — xem bài học mục 10.2 của
-      `GithubActions_Setup.md`)
+      (PATH/quyền/credential store khác với tài khoản đăng nhập tương tác —
+      GCM lưu credential theo user profile, cần xác nhận service account
+      thấy được đúng credential đã đăng nhập — xem bài học mục 10.2 của
+      `GithubActions_Setup.md` về việc service cache môi trường lúc khởi
+      động)

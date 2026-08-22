@@ -15,6 +15,11 @@ from typing import Any, Dict, List, Optional
 
 TOKEN_ENV_VAR = "BUILD_WATCHER_GITHUB_TOKEN"
 
+# A literal "*" in allowed_committers means "trust anyone who can push to
+# the trigger branch" -- a deliberate, visible opt-out of the allowlist,
+# not the same as leaving the check out of the code entirely.
+TRUST_ALL_COMMITTERS = "*"
+
 _REQUIRED = ("repo_url", "owner", "repo", "trigger_branch")
 
 # Builds run inside <workspace>/wt-<12 hex>/, and a deep C project adds
@@ -137,21 +142,35 @@ class Config:
 
     def allows(self, committer_email: str) -> bool:
         """Whether this committer may trigger builds on this machine."""
+        if TRUST_ALL_COMMITTERS in self.allowed_committers:
+            return True
         return committer_email.strip().lower() in {
             entry.strip().lower() for entry in self.allowed_committers
         }
 
 
-def read_token(explicit: Optional[str] = None) -> str:
-    """Token from an explicit value, else the environment.
+def read_token(explicit: Optional[str] = None, host: Optional[str] = None) -> str:
+    """Resolve a token: explicit value, then the environment, then git.
 
-    Never read from the repository, and never logged.
+    The third source -- borrowing whatever credential `git push` already
+    uses via git_credentials.fill_credential -- is what lets this run
+    without anyone visiting a Settings page: it reuses auth the operator
+    already needed to set up regardless. See git_credentials.py.
     """
     token = explicit or os.environ.get(TOKEN_ENV_VAR, "")
-    if not token:
-        raise ConfigError(
-            "no GitHub token: set {0} for the account running this service".format(
-                TOKEN_ENV_VAR
-            )
-        )
-    return token
+    if token:
+        return token
+
+    if host:
+        from . import git_credentials
+
+        borrowed = git_credentials.fill_credential(host)
+        if borrowed:
+            return borrowed
+
+    raise ConfigError(
+        "no GitHub token: set {0}, or make sure `git push` already works "
+        "on this machine for the repository's host (the token is then "
+        "borrowed from git's own credential helper -- no separate token "
+        "needed)".format(TOKEN_ENV_VAR)
+    )

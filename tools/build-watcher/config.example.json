@@ -25,7 +25,7 @@
 
   "status_context": "build-watcher/local",
 
-  "_comment_report_to_github": "Dat false neu chua co token: van build va van tao zip trong artifact_dir, chi khong bao nguoc len GitHub. Xoa dong nay va dong duoi khi da co token.",
+  "_comment_report_to_github": "true = tu muon credential qua 'git credential fill' (khong can tao token thu cong, xem README). Dat false neu may chua tung git push duoc len repo nay.",
   "report_to_github": true,
   "publish_artifacts": true
 }

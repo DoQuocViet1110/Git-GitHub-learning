@@ -120,6 +120,10 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             Config(**self.base(allowed_committers=[]))
 
+    def test_wildcard_trusts_any_committer(self):
+        config = Config(**self.base(allowed_committers=["*"]))
+        self.assertTrue(config.allows("literally-anyone@example.com"))
+
     def test_allowlist_is_case_insensitive(self):
         config = Config(**self.base(allowed_committers=["Dev@Example.com"]))
         self.assertTrue(config.allows("dev@example.com "))
