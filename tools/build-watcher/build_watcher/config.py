@@ -17,6 +17,12 @@ TOKEN_ENV_VAR = "BUILD_WATCHER_GITHUB_TOKEN"
 
 _REQUIRED = ("repo_url", "owner", "repo", "trigger_branch")
 
+# Builds run inside <workspace>/wt-<12 hex>/, and a deep C project adds
+# another ~120 characters below that before Windows' 260-char MAX_PATH
+# bites -- as a nested object file, not as a clear error. Keep the root
+# short (C:\build-watcher) and this never comes up.
+_MAX_SAFE_WORKSPACE_LEN = 60
+
 
 class ConfigError(ValueError):
     """The configuration file is missing or contradicts itself."""
@@ -101,6 +107,23 @@ class Config:
                 "unknown config keys: {0}".format(", ".join(sorted(unknown)))
             )
         return cls(**data)
+
+    def warnings(self) -> List[str]:
+        """Setup problems that are not fatal but will bite later.
+
+        Returned rather than logged so the caller decides how loudly to
+        say them; `check` prints them, `run` logs them once at startup.
+        """
+        found = []
+        workspace = str(self.workspace_dir)
+        if len(workspace) > _MAX_SAFE_WORKSPACE_LEN:
+            found.append(
+                "workspace path is {0} characters ({1}); deep builds can hit "
+                "Windows' 260-char MAX_PATH and fail with confusing "
+                "'cannot open ... for writing' errors. Prefer a short root "
+                "such as C:\\build-watcher".format(len(workspace), workspace)
+            )
+        return found
 
     def allows(self, committer_email: str) -> bool:
         """Whether this committer may trigger builds on this machine."""

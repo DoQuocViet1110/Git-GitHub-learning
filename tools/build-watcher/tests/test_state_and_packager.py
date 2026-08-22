@@ -97,6 +97,15 @@ class ConfigTest(unittest.TestCase):
         self.assertEqual(config.clone_dir, Path("/tmp/bw/repo"))
         self.assertEqual(config.state_file, Path("/tmp/bw/state.json"))
 
+    def test_short_root_has_no_warnings(self):
+        self.assertEqual(Config(**self.base(root="C:/build-watcher")).warnings(), [])
+
+    def test_long_root_warns_about_max_path(self):
+        deep = "C:/" + "/".join("very-long-directory-name" for _ in range(5))
+        warnings = Config(**self.base(root=deep)).warnings()
+        self.assertEqual(len(warnings), 1)
+        self.assertIn("MAX_PATH", warnings[0])
+
 
 if __name__ == "__main__":
     unittest.main()

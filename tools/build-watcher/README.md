@@ -70,12 +70,48 @@ Hai seam thật (mỗi cái có 2 adapter): `GitRepo` ↔ `FakeRepo`,
 `GitHubClient` ↔ `NullGitHubClient`. Test chạy đúng `Watcher`/`BuildPipeline`
 thật, chỉ thay adapter — không mock nội bộ.
 
+## Python có bị policy chặn không?
+
+Câu hỏi này quan trọng vì setup self-hosted runner trước đây từng bị
+**PowerShell Execution Policy** chặn. Trả lời ngắn: **Execution Policy không
+áp dụng cho Python** — nó chỉ chi phối `.ps1`. Nhưng có những cơ chế khác
+*có thể* chặn, cần kiểm tra trên từng máy khách hàng:
+
+| Cơ chế | Có chặn Python không? | Cách kiểm tra |
+|---|---|---|
+| PowerShell Execution Policy | **Không** — chỉ áp dụng cho `.ps1` | `Get-ExecutionPolicy -List` |
+| AppLocker | **Có thể** — rule nhóm `Exe` chặn được `python.exe` (nhóm `Script` mặc định không bao gồm `.py`) | `Get-Service AppIDSvc`; `Get-AppLockerPolicy -Effective` |
+| Software Restriction Policies | **Có thể** — chỉ khi `DefaultLevel` được đặt | `Get-ItemProperty "HKLM:\SOFTWARE\Policies\Microsoft\Windows\Safer\CodeIdentifiers"` |
+| WDAC / Device Guard | **Có thể** — chặn theo chữ ký/hash | `Get-CimInstance Win32_DeviceGuard -Namespace root\Microsoft\Windows\DeviceGuard` |
+| Antivirus / EDR | **Có thể** — quarantine `python.exe` mới tải về | Hỏi đội bảo mật khách hàng |
+| Chặn cài đặt (MSI/Store) | Né được bằng bản **embeddable** | `HKLM:\SOFTWARE\Policies\Microsoft\Windows\Installer` |
+
+**Vì sao dùng bản embeddable zip**: không cần installer, không cần quyền
+admin, không ghi registry, không cần `pip`. Chỉ giải nén là chạy. Điều này
+chỉ khả thi vì tool viết **stdlib-only** — đó là lý do thật sự của ràng buộc
+đó, không phải sở thích.
+
+> Nếu máy khách hàng chặn cả `python.exe` ở mức AppLocker/WDAC thì mọi
+> phương án script đều tắc như nhau (PowerShell còn tắc sớm hơn vì
+> Execution Policy). Lúc đó phương án còn lại là xin whitelist theo đường
+> dẫn/hash cho `python.exe`, hoặc biên dịch tool thành 1 `.exe` duy nhất
+> rồi xin whitelist cho file đó.
+
 ## Cài đặt trên máy build
 
-**Yêu cầu**: Python 3.8+ (bản Windows, không phải cygwin), git, và toolchain
-build của project (CMake/Ninja/ARM GCC — xem `doc/GithubActions/GithubActions_Setup.md`).
+**Yêu cầu**: Python 3.8+ (bản **Windows**, không phải cygwin — cygwin khác
+path semantics), git, và toolchain build của project (CMake/Ninja/ARM GCC —
+xem `doc/GithubActions/GithubActions_Setup.md`).
 
 ```powershell
+# 0) Cài Python embeddable (khong can admin, khong ghi registry)
+$dst = "C:\build-watcher\python"
+New-Item -ItemType Directory -Force -Path $dst | Out-Null
+Invoke-WebRequest -Uri "https://www.python.org/ftp/python/3.12.10/python-3.12.10-embed-amd64.zip" -OutFile "$env:TEMP\py.zip" -UseBasicParsing
+Expand-Archive "$env:TEMP\py.zip" -DestinationPath $dst -Force
+# Ban embeddable co ay sys.path; phai them thu muc app vao ._pth
+Add-Content "$dst\python312._pth" "C:\build-watcher\app"
+
 # 1) Chép thư mục này vào máy build
 Copy-Item -Recurse tools\build-watcher C:\build-watcher\app
 
@@ -101,6 +137,13 @@ python -m build_watcher --config C:\build-watcher\config.json run
 > User PATH/biến môi trường của tài khoản đăng nhập. Cùng đúng 1 bài học đã
 > gặp khi setup self-hosted runner trước đây: đổi biến môi trường xong phải
 > **restart service**, vì service chỉ nạp môi trường 1 lần lúc khởi động.
+
+> ⚠️ **Giữ `root` ngắn** (mặc định `C:\build-watcher`). Build chạy trong
+> `<root>\work\wt-<12 hex>\`, và project C nhiều tầng thư mục còn thêm
+> ~120 ký tự nữa — vượt giới hạn **MAX_PATH 260 ký tự** của Windows là
+> compiler báo lỗi kiểu `cannot open ... .su for writing: No such file or
+> directory`, rất khó đoán ra nguyên nhân. Lệnh `check` sẽ cảnh báo nếu
+> đường dẫn workspace quá dài. Đây là lỗi đã gặp thật khi test tool này.
 
 ## Chuẩn bị phía repo khách hàng
 
@@ -133,11 +176,33 @@ nssm start BuildWatcher
 python -m unittest discover -s tests -t .
 ```
 
+## Đã kiểm chứng trên máy thật
+
+Chạy end-to-end trên Windows 10 Pro với Python 3.12.10 embeddable, dùng 1
+bare repo đóng vai repo khách hàng và branch `feature/Github_Actions_V2`
+thật của project này:
+
+| Kiểm chứng | Kết quả |
+|---|---|
+| 36 unit test trên Windows Python | pass |
+| `check` — clone, đọc trigger branch, tìm request file | pass |
+| Lần poll đầu tiên chỉ baseline, không build lại lịch sử | pass |
+| Push **2 request liên tiếp** giữa 2 lần poll | cả 2 đều được build, không mất cái nào |
+| Request từ email ngoài allowlist | bị chặn **trước khi** chạm builder, có status failure |
+| Build thất bại thật (MAX_PATH) | báo failure kèm exit code, ghi log, **không** publish artifact |
+| Build thành công | zip đúng 4 file `.elf/.hex/.bin/.map`, worktree được dọn sạch |
+
+Phần **chưa** kiểm chứng: đường đi HTTP thật tới GitHub (`GitHubClient`) —
+mọi lần chạy trên đều dùng `--dry-run`, tức `NullGitHubClient`. Cần 1 token
+thật để kiểm chứng nốt việc tạo Release và đặt Commit Status.
+
 ## Còn thiếu (roadmap)
 
+- [ ] Kiểm chứng `GitHubClient` với token thật (Release + Commit Status)
 - [ ] Heartbeat định kỳ để biết máy build còn sống (pull-based không có
       "chấm xanh Idle" như trang Runners của Actions)
 - [ ] Dọn artifact/log cũ theo tuổi
 - [ ] Đọc token từ Windows Credential Manager thay vì biến môi trường
-- [ ] Test end-to-end với 1 repo git thật (hiện GitRepo mới chỉ được dùng
-      qua fake trong test)
+- [ ] Chạy như Windows Service và kiểm chứng lại dưới tài khoản service
+      (PATH/quyền khác với tài khoản đăng nhập — xem bài học mục 10.2 của
+      `GithubActions_Setup.md`)

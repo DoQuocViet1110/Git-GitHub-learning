@@ -38,6 +38,9 @@ def main(argv=None) -> int:
 
     setup_logging(config.log_dir, args.verbose)
 
+    for warning in config.warnings():
+        log.warning("%s", warning)
+
     if args.command == "check":
         return _check(config, args.dry_run)
 
