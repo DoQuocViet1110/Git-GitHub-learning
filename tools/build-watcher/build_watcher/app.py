@@ -28,8 +28,8 @@ def build_watcher(config: Config, dry_run: bool = False, token: Optional[str] = 
         workspace=config.workspace_dir,
     )
     github = (
-        NullGitHubClient()
-        if dry_run
+        NullGitHubClient("dry-run" if dry_run else "no-github")
+        if dry_run or not config.report_to_github
         else GitHubClient(
             owner=config.owner,
             repo=config.repo,

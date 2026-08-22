@@ -67,6 +67,43 @@ class PackagerTest(unittest.TestCase):
             self.assertEqual(len(zf.namelist()), 1)
 
 
+class ConfigLoadTest(unittest.TestCase):
+    def setUp(self):
+        self._tmp = tempfile.TemporaryDirectory()
+        self.path = Path(self._tmp.name) / "config.json"
+
+    def tearDown(self):
+        self._tmp.cleanup()
+
+    def write(self, body: str):
+        self.path.write_text(body, encoding="utf-8")
+        return self.path
+
+    def test_underscore_keys_are_comments(self):
+        path = self.write(
+            """{
+              "_note": "JSON has no comments, so this stands in for one",
+              "repo_url": "https://example.invalid/x.git",
+              "owner": "acme", "repo": "fw", "trigger_branch": "build-requests",
+              "allowed_committers": ["dev@example.com"]
+            }"""
+        )
+        self.assertEqual(Config.load(path).owner, "acme")
+
+    def test_real_typo_is_still_refused(self):
+        path = self.write(
+            """{
+              "repo_url": "https://example.invalid/x.git",
+              "owner": "acme", "repo": "fw", "trigger_branch": "build-requests",
+              "allowed_committers": ["dev@example.com"],
+              "poll_interval": 60
+            }"""
+        )
+        with self.assertRaises(ConfigError) as ctx:
+            Config.load(path)
+        self.assertIn("poll_interval", str(ctx.exception))
+
+
 class ConfigTest(unittest.TestCase):
     def base(self, **overrides):
         data = dict(
@@ -96,6 +133,10 @@ class ConfigTest(unittest.TestCase):
         config = Config(**self.base(root="/tmp/bw"))
         self.assertEqual(config.clone_dir, Path("/tmp/bw/repo"))
         self.assertEqual(config.state_file, Path("/tmp/bw/state.json"))
+
+    def test_reporting_is_on_unless_turned_off(self):
+        self.assertTrue(Config(**self.base()).report_to_github)
+        self.assertFalse(Config(**self.base(report_to_github=False)).report_to_github)
 
     def test_short_root_has_no_warnings(self):
         self.assertEqual(Config(**self.base(root="C:/build-watcher")).warnings(), [])

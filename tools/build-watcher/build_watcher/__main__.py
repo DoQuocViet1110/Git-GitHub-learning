@@ -41,6 +41,13 @@ def main(argv=None) -> int:
     for warning in config.warnings():
         log.warning("%s", warning)
 
+    if not config.report_to_github:
+        log.warning(
+            "report_to_github is off: no commit statuses, no releases. "
+            "Collect builds yourself from %s",
+            config.artifact_dir,
+        )
+
     if args.command == "check":
         return _check(config, args.dry_run)
 
@@ -72,7 +79,7 @@ def _check(config: Config, dry_run: bool) -> int:
     """Validate config, credentials and remote access without building."""
     problems = []
 
-    if not dry_run:
+    if not dry_run and config.report_to_github:
         try:
             read_token()
         except ConfigError as exc:

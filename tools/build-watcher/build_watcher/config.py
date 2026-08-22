@@ -64,6 +64,12 @@ class Config:
     max_requests_per_poll: int = 20
 
     # reporting
+    #
+    # report_to_github False is the no-token mode: builds still run and
+    # zips still land in artifact_dir, but nothing is sent back. Useful
+    # while a token is still being arranged, and on machines where one is
+    # never going to be allowed.
+    report_to_github: bool = True
     status_context: str = "build-watcher/local"
     api_base: str = "https://api.github.com"
     upload_base: str = "https://uploads.github.com"
@@ -99,6 +105,10 @@ class Config:
         missing = [key for key in _REQUIRED if not data.get(key)]
         if missing:
             raise ConfigError("config is missing: {0}".format(", ".join(missing)))
+
+        # JSON has no comments, so keys starting with "_" are treated as
+        # notes for whoever edits this file next and dropped here.
+        data = {k: v for k, v in data.items() if not k.startswith("_")}
 
         known = {f for f in cls.__dataclass_fields__}  # type: ignore[attr-defined]
         unknown = set(data) - known

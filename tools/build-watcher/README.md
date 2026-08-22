@@ -97,6 +97,53 @@ chỉ khả thi vì tool viết **stdlib-only** — đó là lý do thật sự 
 > dẫn/hash cho `python.exe`, hoặc biên dịch tool thành 1 `.exe` duy nhất
 > rồi xin whitelist cho file đó.
 
+## Token: cần loại nào, và vì sao
+
+Tool cần token cho 2 việc: đọc code repo private, và báo ngược kết quả lên
+GitHub (Commit Status + Release). **Không** cần quyền Settings của repo khách
+hàng — token được tạo từ **Settings tài khoản của bạn**, và quyền nó mang
+theo không vượt quá quyền bạn vốn có với tư cách collaborator.
+
+Loại token phụ thuộc repo khách nằm ở đâu:
+
+| Repo khách hàng | Token dùng được | Vì sao |
+|---|---|---|
+| Thuộc **Organization** | Fine-grained PAT (org phải đã bật cho phép) | Chọn được đúng repo + đúng quyền |
+| Thuộc **tài khoản cá nhân** của khách | **Bắt buộc classic PAT** | Fine-grained PAT không trỏ được vào repo cá nhân của người khác |
+
+**Nếu là repo cá nhân — đừng dùng classic PAT của tài khoản chính.** Classic
+PAT chỉ có scope thô `repo`, tức toàn quyền trên **mọi** repo mà tài khoản đó
+truy cập được, gồm cả repo của các khách hàng khác. Token này lại nằm thường
+trực trên máy khách hàng này.
+
+Cách xử lý đúng — **machine account**:
+
+1. Tạo 1 tài khoản GitHub riêng cho việc build (ví dụ `xxx-buildbot`)
+2. Nhờ khách add tài khoản đó làm **collaborator** vào đúng repo đó
+3. Tạo classic PAT **từ tài khoản buildbot**
+
+| Phương án | Phạm vi nếu token lộ | Cần khách làm gì |
+|---|---|---|
+| Classic PAT từ tài khoản bạn | Mọi repo bạn truy cập được ⚠️ | Không |
+| Classic PAT từ machine account | Đúng 1 repo ✅ | Add 1 collaborator |
+
+Yêu cầu "add 1 collaborator" nhẹ hơn hẳn "cho tôi vào Settings" — khách vẫn
+giữ nguyên quyền kiểm soát repo. Dù chọn cách nào, đặt **hạn 90 ngày** và
+xoay vòng; classic PAT cho phép để vĩnh viễn, đừng làm vậy.
+
+### Chạy khi chưa có token
+
+Đặt `"report_to_github": false` trong config: tool vẫn poll, checkout, build
+và tạo zip trong `artifact_dir` — chỉ không báo ngược lên GitHub. Dùng để
+triển khai ngay trong lúc còn thu xếp token, hoặc cho máy vĩnh viễn không
+được cấp token.
+
+| Chức năng | `report_to_github: false` |
+|---|---|
+| Phát hiện request, checkout, build, đóng gói zip | ✅ vẫn chạy |
+| Dấu ✅/❌ trên commit | ❌ mất |
+| Upload zip lên Releases | ❌ mất — tự lấy ở `artifact_dir` |
+
 ## Cài đặt trên máy build
 
 **Yêu cầu**: Python 3.8+ (bản **Windows**, không phải cygwin — cygwin khác
@@ -191,6 +238,7 @@ thật của project này:
 | Request từ email ngoài allowlist | bị chặn **trước khi** chạm builder, có status failure |
 | Build thất bại thật (MAX_PATH) | báo failure kèm exit code, ghi log, **không** publish artifact |
 | Build thành công | zip đúng 4 file `.elf/.hex/.bin/.map`, worktree được dọn sạch |
+| Chế độ `report_to_github: false`, **không có token nào** | build thật chạy xong, zip được tạo, không gọi GitHub |
 
 Phần **chưa** kiểm chứng: đường đi HTTP thật tới GitHub (`GitHubClient`) —
 mọi lần chạy trên đều dùng `--dry-run`, tức `NullGitHubClient`. Cần 1 token

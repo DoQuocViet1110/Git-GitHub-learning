@@ -34,24 +34,30 @@ class GitHubError(RuntimeError):
 
 
 class NullGitHubClient:
-    """Adapter that records calls instead of making them (dry run, tests)."""
+    """Adapter that records calls instead of making them.
 
-    def __init__(self) -> None:
+    Used for dry runs, for tests, and for the no-token mode where builds
+    run but nothing is reported back. ``label`` names which of those is
+    happening so the log does not claim "dry-run" during a real build.
+    """
+
+    def __init__(self, label: str = "dry-run") -> None:
+        self.label = label
         self.statuses = []
         self.artifacts = []
 
     def set_commit_status(
         self, sha: str, state: str, description: str, target_url: Optional[str] = None
     ) -> None:
-        log.info("[dry-run] status %s on %s: %s", state, sha[:12], description)
+        log.info("[%s] status %s on %s: %s", self.label, state, sha[:12], description)
         self.statuses.append((sha, state, description, target_url))
 
     def publish_artifact(
         self, tag: str, name: str, notes: str, asset: Path
     ) -> str:
-        log.info("[dry-run] publish %s as %s", asset, tag)
+        log.info("[%s] artifact kept locally: %s", self.label, asset)
         self.artifacts.append((tag, name, notes, asset))
-        return "dry-run://{0}".format(tag)
+        return ""
 
 
 class GitHubClient:
