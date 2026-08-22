@@ -1,0 +1,28 @@
+{
+  "repo_url": "https://github.com/customer-org/customer-repo.git",
+  "owner": "customer-org",
+  "repo": "customer-repo",
+  "trigger_branch": "build-requests",
+  "request_file": "Build_Infor.txt",
+  "poll_interval_seconds": 60,
+
+  "root": "C:/build-watcher",
+
+  "build_script": "build.bat",
+  "build_timeout_seconds": 3600,
+  "artifact_globs": [
+    "build/*/*.elf",
+    "build/*/*.hex",
+    "build/*/*.bin",
+    "build/*/*.map"
+  ],
+
+  "allowed_committers": [
+    "dqvietc6.pbchau@gmail.com"
+  ],
+  "allowed_presets": ["Debug", "Release"],
+  "max_requests_per_poll": 20,
+
+  "status_context": "build-watcher/local",
+  "publish_artifacts": true
+}

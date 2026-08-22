@@ -1,0 +1,13 @@
+# Build request file -- lives on the trigger branch of the customer repo.
+#
+# Add a new line at the bottom and push. The bottom-most request line wins,
+# so the lines above are simply a readable history of past requests.
+#
+#   [Build] - [branch-to-build]
+#   [Build] - [branch-to-build] - [preset]
+#
+# The build script itself is NOT named here: the build machine decides what
+# to run (build.bat by default). This is deliberate -- anything named here
+# would be attacker-controlled input executing on the build machine.
+
+[Build] - [feature/my-branch] - [Debug]
