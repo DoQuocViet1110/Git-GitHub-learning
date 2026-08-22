@@ -72,7 +72,34 @@ Trước khi bắt đầu, máy build phải có **4 thứ** sau:
 
 > **Không cần** quyền Administrator. **Không cần** cài Python (tool tự lo).
 
-### 2.1. Đăng nhập GitHub trên máy build (rất quan trọng)
+### 2.0. TRƯỚC TIÊN: máy đang dùng SSH hay HTTPS?
+
+Đây là câu hỏi quyết định bạn phải làm gì tiếp theo. Cách kiểm tra:
+
+Mở Command Prompt, vào thư mục đã clone repo khách hàng, gõ:
+```
+git remote -v
+```
+
+| Kết quả hiện ra bắt đầu bằng | Nghĩa là | Làm tiếp theo |
+|---|---|---|
+| `https://github.com/...` | Dùng **HTTPS** | Làm mục **2.1** ngay dưới |
+| `git@github.com:...` | Dùng **SSH** | Làm mục **2.2** |
+
+#### Vì sao phân biệt quan trọng
+
+| | Tải/đẩy code (clone, fetch, push) | Đưa kết quả lên GitHub (Release, dấu tick) |
+|---|---|---|
+| **HTTPS** đã đăng nhập | ✅ Được | ✅ Được — tool tự mượn thông tin đăng nhập |
+| **SSH key** | ✅ Được | ❌ **KHÔNG được** |
+
+SSH key chỉ dùng để tải/đẩy code. GitHub **không chấp nhận SSH key** cho phần
+tạo Release và gắn dấu tick — đó là 2 cơ chế hoàn toàn khác nhau.
+
+> Đây là kết quả đã kiểm chứng thật, không phải suy đoán: gọi API bằng SSH key
+> trả về lỗi `HTTP 401 Unauthorized`.
+
+### 2.1. Nếu máy dùng HTTPS — đăng nhập GitHub (rất quan trọng)
 
 Đây là bước hay bị bỏ sót nhất. Làm **1 lần duy nhất** trên máy build:
 
@@ -89,6 +116,54 @@ thông tin đó — **bạn không cần tạo "token" hay vào trang Settings n
 
 > ⚠️ **Đăng nhập bằng tài khoản Windows nào thì sau này phải chạy tool bằng
 > đúng tài khoản Windows đó.** Xem mục 8 để hiểu vì sao.
+
+### 2.2. Nếu máy dùng SSH — chọn 1 trong 2 hướng
+
+Tool **vẫn tải code và build bình thường** qua SSH. Chỉ riêng phần đưa kết quả
+lên GitHub là cần thêm token. Có 2 lựa chọn:
+
+#### Hướng A — Không đưa kết quả lên GitHub (đơn giản nhất, không cần làm gì thêm)
+
+Khi `setup.bat` hỏi *"Bat bao ket qua len GitHub?"* → **gõ `n`**.
+
+Kết quả: tool vẫn tự phát hiện yêu cầu, tự tải code, tự build, tự tạo file
+`.zip`. Bạn lấy file ở `C:\build-watcher\data\artifacts\`. Chỉ mất phần dấu
+tick xanh và mục Releases trên GitHub.
+
+> Có thể bật lại sau bất cứ lúc nào bằng cách làm Hướng B.
+
+#### Hướng B — Tạo token để có đầy đủ tính năng
+
+Bạn **đã từng làm việc tương tự rồi**: lúc tạo SSH key, bạn phải vào
+`github.com/settings/keys` để thêm khoá. Tạo token cũng ở khu vực đó —
+**Settings của tài khoản BẠN**, hoàn toàn không liên quan tới Settings repo
+khách hàng (cái mà khách không cho bạn vào).
+
+| Trang | Của ai | Bạn vào được không |
+|---|---|---|
+| `github.com/settings/keys` | Tài khoản bạn | ✅ Đã vào rồi (để thêm SSH key) |
+| `github.com/settings/tokens` | Tài khoản bạn | ✅ Vào được, cùng khu vực |
+| `github.com/<khách>/<repo>/settings` | Repo khách hàng | ❌ Khách không cho — **không dùng đến** |
+
+**Các bước:**
+
+1. Vào https://github.com/settings/tokens
+2. Chọn **"Tokens (classic)"** → **"Generate new token (classic)"**
+3. Đặt tên bất kỳ, ví dụ `build-watcher`
+4. Chọn thời hạn (khuyên dùng **90 days**)
+5. Tích vào ô **`repo`** (tích ô cha là đủ, các ô con tự tích theo)
+6. Bấm **"Generate token"** → **copy chuỗi hiện ra ngay** (chỉ hiện 1 lần)
+7. Trên máy build, mở **Command Prompt as Administrator**, chạy:
+   ```
+   setx BUILD_WATCHER_GITHUB_TOKEN "dan-chuoi-token-vao-day" /M
+   ```
+8. **Khởi động lại máy** (bắt buộc, để Windows nạp lại biến môi trường)
+9. Chạy `check.bat` để kiểm tra
+
+> 💡 **Lời khuyên bảo mật**: token loại `repo` có quyền trên **mọi** repo mà
+> tài khoản đó truy cập được. Nếu tài khoản bạn còn tham gia repo của khách
+> hàng khác, cân nhắc dùng 1 tài khoản GitHub riêng cho việc build và nhờ
+> khách add tài khoản đó làm collaborator vào đúng 1 repo.
 
 ---
 
@@ -384,6 +459,7 @@ Mở `C:\build-watcher\data\logs\build-watcher.log`, tìm dòng có chữ `ERROR
 
 | Trong nhật ký thấy | Nghĩa là | Cách sửa |
 |---|---|---|
+| `cloned over SSH, and SSH keys cannot be used for GitHub's API` | Repo dùng SSH — SSH key không đưa được kết quả lên GitHub | Làm mục **2.2** (chọn hướng A hoặc B) |
 | `no GitHub token` | Chưa đăng nhập GitHub, hoặc đang chạy dưới sai tài khoản Windows | Làm mục 2.1; nếu chạy bằng Task Scheduler thì kiểm tra lại mục 8 |
 | `HTTP 403` | Tài khoản không có quyền ghi | Nhờ khách cấp quyền **Write** cho tài khoản |
 | `HTTP 404` | Sai tên repo trong `config.json` | Chạy lại `setup.bat` |
@@ -489,11 +565,26 @@ Không cho tool chạy liên tục. Mỗi khi cần build, nhấn đúp `build-o
         Mở Command Prompt, gõ:  git --version
         → Phải hiện số phiên bản
 
-[ ] BƯỚC 2: Đăng nhập GitHub (làm 1 lần)
+[ ] BƯỚC 1b: XÁC ĐỊNH SSH HAY HTTPS  ← LÀM TRƯỚC, quyết định các bước sau
+        Vào thư mục đã clone repo khách, gõ:  git remote -v
+        → Bắt đầu bằng https://    → làm BƯỚC 2-HTTPS
+        → Bắt đầu bằng git@        → làm BƯỚC 2-SSH
+        Ghi lại kết quả: ____________________
+
+[ ] BƯỚC 2-HTTPS: Đăng nhập GitHub (làm 1 lần)
         git clone https://github.com/____/____.git C:\test-clone
         → Trình duyệt hiện ra, đăng nhập
         → Xoá thư mục C:\test-clone
         → GHI NHỚ đang dùng tài khoản Windows nào: ______________
+
+[ ] BƯỚC 2-SSH: Chọn 1 trong 2
+        [ ] A. Không cần Release/dấu tick
+               → Ở BƯỚC 4, khi hỏi "Bat bao ket qua len GitHub?" gõ: n
+        [ ] B. Muốn đầy đủ tính năng
+               → Tạo token tại github.com/settings/tokens (quyền: repo)
+               → Command Prompt as Admin:
+                 setx BUILD_WATCHER_GITHUB_TOKEN "token" /M
+               → KHỞI ĐỘNG LẠI MÁY
 
 [ ] BƯỚC 3: Chép thư mục build-watcher vào  C:\build-watcher
         (Đường dẫn phải NGẮN, không để trong Desktop/Documents)
@@ -580,8 +671,11 @@ Chạy thật trên Windows 10 Pro, Python 3.12.10 bản rút gọn, repo GitHub
 | Yêu cầu từ email ngoài danh sách | bị chặn trước khi build |
 | Build thất bại thật | báo lỗi đúng, không tạo Release |
 | Build thành công | zip đúng 4 file, worktree được dọn |
-| Đưa lên GitHub **không cần token thủ công** | Release + Commit Status xuất hiện thật |
+| Đưa lên GitHub **không cần token thủ công** (repo HTTPS) | Release + Commit Status xuất hiện thật |
 | `target_commitish` trỏ đúng commit đã build | xác nhận lại qua API |
+| Clone + build qua **remote SSH** (`git@github.com:...`) | chạy được bình thường |
+| SSH key dùng cho REST API | trả về `HTTP 401` — xác nhận không dùng được, phải có token |
+| Thông báo lỗi khi SSH + bật báo cáo mà không có token | nêu đúng nguyên nhân SSH và cả 2 cách sửa |
 
 ### 13.5. Còn thiếu
 

@@ -149,7 +149,11 @@ class Config:
         }
 
 
-def read_token(explicit: Optional[str] = None, host: Optional[str] = None) -> str:
+def read_token(
+    explicit: Optional[str] = None,
+    host: Optional[str] = None,
+    ssh_remote: bool = False,
+) -> str:
     """Resolve a token: explicit value, then the environment, then git.
 
     The third source -- borrowing whatever credential `git push` already
@@ -167,6 +171,17 @@ def read_token(explicit: Optional[str] = None, host: Optional[str] = None) -> st
         borrowed = git_credentials.fill_credential(host)
         if borrowed:
             return borrowed
+
+    if ssh_remote:
+        # SSH authenticates the git transport only; GitHub's REST API does
+        # not accept SSH keys, and SSH auth leaves nothing in the HTTPS
+        # credential store to borrow. A token is unavoidable here.
+        raise ConfigError(
+            "this repository is cloned over SSH, and SSH keys cannot be used "
+            "for GitHub's API (releases and commit statuses). Either set {0} "
+            "to a personal access token, or set \"report_to_github\": false "
+            "to build without reporting back".format(TOKEN_ENV_VAR)
+        )
 
     raise ConfigError(
         "no GitHub token: set {0}, or make sure `git push` already works "

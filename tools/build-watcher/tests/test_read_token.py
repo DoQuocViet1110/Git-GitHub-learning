@@ -41,6 +41,29 @@ class ReadTokenTest(unittest.TestCase):
             with self.assertRaises(ConfigError):
                 read_token()
 
+    def test_ssh_remote_gets_an_ssh_specific_explanation(self):
+        """"git push works, so why no token?" is the confusing case here:
+        SSH auth succeeds for git yet leaves nothing the API can use, so
+        the error has to name SSH rather than suggest fixing git access.
+        """
+        with mock.patch.dict("os.environ", {}, clear=True):
+            with mock.patch(
+                "build_watcher.git_credentials.fill_credential", return_value=None
+            ):
+                with self.assertRaises(ConfigError) as ctx:
+                    read_token(host="github.com", ssh_remote=True)
+        message = str(ctx.exception)
+        self.assertIn("SSH", message)
+        self.assertIn("report_to_github", message)
+
+    def test_env_token_still_wins_for_ssh_remotes(self):
+        with mock.patch.dict(
+            "os.environ", {"BUILD_WATCHER_GITHUB_TOKEN": "pat-value"}, clear=True
+        ):
+            self.assertEqual(
+                read_token(host="github.com", ssh_remote=True), "pat-value"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

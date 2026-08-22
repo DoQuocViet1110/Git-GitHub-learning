@@ -13,7 +13,7 @@ import tempfile
 import unittest
 from unittest import mock
 
-from build_watcher.git_credentials import fill_credential, host_from_url
+from build_watcher.git_credentials import fill_credential, host_from_url, is_ssh_url
 
 
 class HostFromUrlTest(unittest.TestCase):
@@ -27,6 +27,34 @@ class HostFromUrlTest(unittest.TestCase):
             host_from_url("https://git.acme.internal/team/firmware.git"),
             "git.acme.internal",
         )
+
+    def test_ssh_url_yields_the_same_host(self):
+        """An SSH remote must not crash the lookup; its API still lives on
+        the same host, even though no credential will be found there.
+        """
+        self.assertEqual(
+            host_from_url("git@github.com:acme/firmware.git"), "github.com"
+        )
+
+    def test_ssh_protocol_prefix(self):
+        self.assertEqual(
+            host_from_url("ssh://git@git.acme.internal:2222/team/fw.git"),
+            "git.acme.internal",
+        )
+
+
+class IsSshUrlTest(unittest.TestCase):
+    def test_detects_ssh_remotes(self):
+        for url in (
+            "git@github.com:acme/firmware.git",
+            "ssh://git@github.com/acme/firmware.git",
+            "  git@github.com:acme/firmware.git  ",
+        ):
+            with self.subTest(url=url):
+                self.assertTrue(is_ssh_url(url))
+
+    def test_https_is_not_ssh(self):
+        self.assertFalse(is_ssh_url("https://github.com/acme/firmware.git"))
 
 
 class FillCredentialTest(unittest.TestCase):

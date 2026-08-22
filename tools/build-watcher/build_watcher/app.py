@@ -13,7 +13,7 @@ from typing import Optional
 
 from .builder import Builder
 from .config import Config, read_token
-from .git_credentials import host_from_url
+from .git_credentials import host_from_url, is_ssh_url
 from .git_repo import GitRepo
 from .github_client import GitHubClient, NullGitHubClient
 from .packager import Packager
@@ -34,7 +34,11 @@ def build_watcher(config: Config, dry_run: bool = False, token: Optional[str] = 
         else GitHubClient(
             owner=config.owner,
             repo=config.repo,
-            token=read_token(token, host=host_from_url(config.repo_url)),
+            token=read_token(
+                token,
+                host=host_from_url(config.repo_url),
+                ssh_remote=is_ssh_url(config.repo_url),
+            ),
             status_context=config.status_context,
             api_base=config.api_base,
             upload_base=config.upload_base,

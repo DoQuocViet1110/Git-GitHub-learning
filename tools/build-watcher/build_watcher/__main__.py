@@ -10,7 +10,7 @@ import threading
 
 from .app import build_watcher, setup_logging
 from .config import Config, ConfigError, read_token
-from .git_credentials import host_from_url
+from .git_credentials import host_from_url, is_ssh_url
 
 log = logging.getLogger("build_watcher")
 
@@ -82,7 +82,10 @@ def _check(config: Config, dry_run: bool) -> int:
 
     if not dry_run and config.report_to_github:
         try:
-            read_token(host=host_from_url(config.repo_url))
+            read_token(
+                host=host_from_url(config.repo_url),
+                ssh_remote=is_ssh_url(config.repo_url),
+            )
         except ConfigError as exc:
             problems.append(str(exc))
 

@@ -48,11 +48,13 @@ def ask_yes_no(question: str, default_yes: bool = True) -> bool:
 
 
 def parse_repo_url(url: str):
-    """Return (normalised_https_url, owner, repo), or None if unparseable.
+    """Return (url_to_use, owner, repo, is_ssh), or None if unparseable.
 
-    SSH URLs are converted rather than rejected: the tool's token
-    borrowing asks git for an `https` credential, so an SSH remote would
-    leave it with nothing to borrow.
+    An SSH URL is kept as given, never rewritten to HTTPS: on a machine
+    set up with an SSH key and no HTTPS login, rewriting it would break
+    cloning outright. The cost is that no API token can be borrowed from
+    such a remote (GitHub's API does not accept SSH keys), which the
+    caller warns about separately.
     """
     url = url.strip()
     match = _HTTPS_REPO.match(url)
@@ -63,22 +65,12 @@ def parse_repo_url(url: str):
             ),
             match.group("owner"),
             match.group("repo"),
+            False,
         )
 
     match = _SSH_REPO.match(url)
     if match:
-        print()
-        print("  ! Ban vua nhap dia chi dang SSH (git@...).")
-        print("    Tool nay lay token qua giao thuc HTTPS, nen se doi sang HTTPS.")
-        print("    Neu may nay chi cau hinh SSH, xem muc 'Khac phuc su co' trong README.")
-        print()
-        return (
-            "https://{0}/{1}/{2}.git".format(
-                match.group("host"), match.group("owner"), match.group("repo")
-            ),
-            match.group("owner"),
-            match.group("repo"),
-        )
+        return (url, match.group("owner"), match.group("repo"), True)
     return None
 
 
@@ -114,9 +106,10 @@ def main() -> int:
         if parsed is None:
             print("  -> Khong doc duoc dia chi. Vi du dung:")
             print("     https://github.com/ten-khach-hang/ten-repo")
-    repo_url, owner, repo = parsed
+    repo_url, owner, repo, is_ssh = parsed
     print("  -> Chu so huu : {0}".format(owner))
     print("  -> Ten repo   : {0}".format(repo))
+    print("  -> Giao thuc  : {0}".format("SSH" if is_ssh else "HTTPS"))
     print()
 
     trigger_branch = ask(
@@ -156,7 +149,30 @@ def main() -> int:
     print("dau tick xanh/do len commit da yeu cau build.")
     print("Neu tat: chi build va luu file zip tren may nay.")
     print()
-    report_to_github = ask_yes_no("Bat bao ket qua len GitHub?", default_yes=True)
+
+    default_report = True
+    if is_ssh:
+        print("  !!! LUU Y QUAN TRONG - repo nay dung SSH !!!")
+        print()
+        print("  SSH key chi dung de tai/day code, KHONG dung duoc cho phan")
+        print("  bao ket qua len GitHub (tao Release, gan dau tick).")
+        print()
+        print("  Neu van muon bat phan bao ket qua, can lam them 1 buoc:")
+        print("    1. Vao https://github.com/settings/tokens")
+        print("       (Settings cua TAI KHOAN BAN - cung cho ban da them SSH key)")
+        print("    2. Tao token moi, chon quyen 'repo'")
+        print("    3. Mo Command Prompt as Administrator, chay:")
+        print("       setx BUILD_WATCHER_GITHUB_TOKEN \"dan-token-vao-day\" /M")
+        print("    4. Khoi dong lai may")
+        print()
+        print("  Neu chua lam buoc do, nen chon 'n' bay gio: tool van build")
+        print("  binh thuong va luu file zip tren may nay. Bat lai sau cung duoc.")
+        print()
+        default_report = False
+
+    report_to_github = ask_yes_no(
+        "Bat bao ket qua len GitHub?", default_yes=default_report
+    )
     print()
 
     # --- Access control -----------------------------------------------
