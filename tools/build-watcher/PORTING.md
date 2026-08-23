@@ -209,37 +209,102 @@ Làm trên web, **không cần quyền Settings**:
 
 ## GIAI ĐOẠN 5 — Đặt token (chỉ khi cần)
 
-Tra bảng xem có cần không:
+### 5.0. Trước hết: có cần token không?
 
-| Trường hợp | Cần token gì | Bắt buộc? |
+Nhiều trường hợp **không cần token nào cả**. Tra bảng:
+
+| Trường hợp | Token GitHub | Token GitLab |
 |---|---|---|
-| HTTPS + lưu trên GitHub | Không cần | Tool tự mượn thông tin đăng nhập |
-| SSH + `report_to_github: true` | Token **GitHub** | Bắt buộc |
-| Lưu trên **GitLab** | Token **GitLab** | Bắt buộc (trừ khi máy đã push GitLab qua HTTPS) |
-| `report_to_github: false` + `local` | Không cần | — |
+| HTTPS + lưu trên GitHub | ❌ Không cần — tool tự mượn | ❌ |
+| **SSH** + muốn dấu ✅/❌ trên GitHub | ✅ **Cần** | ❌ |
+| **SSH** + `report_to_github: false` | ❌ Không cần | — |
+| Lưu artifact trên **GitLab** | — | ✅ **Cần**¹ |
+| `report_to_github: false` + `local` | ❌ | ❌ |
 
-### 5.1. Token GitHub (nếu cần)
+¹ Trừ khi máy build **đã từng `git push` lên GitLab đó qua HTTPS** — khi đó
+tool tự mượn thông tin đăng nhập, giống hệt cách làm với GitHub.
 
-1. `github.com/settings/tokens` → **Tokens (classic)** → **Generate new token**
-2. Tích quyền **`repo`**, đặt hạn 90 ngày
-3. Command Prompt **as Administrator**:
-   ```
-   setx BUILD_WATCHER_GITHUB_TOKEN "dan-token-vao-day" /M
-   ```
-4. **Khởi động lại máy**
+> **Phương án B** (SSH + GitLab, hay dùng nhất): chỉ cần **1 token GitLab**,
+> không cần token GitHub.
 
-### 5.2. Token GitLab (nếu chọn lưu trên GitLab)
+### 5.1. Token GitHub — lấy ở đâu, tích quyền gì
 
-1. GitLab → ảnh đại diện → **Preferences** → **Access Tokens**
-2. **Add new token**, tích quyền **`api`**
-3. Command Prompt **as Administrator**:
-   ```
-   setx BUILD_WATCHER_GITLAB_TOKEN "dan-token-vao-day" /M
-   ```
-4. **Khởi động lại máy**
+**Địa chỉ**: https://github.com/settings/tokens
 
-> 💡 `setx` chỉ có hiệu lực từ **cửa sổ mới**. Khởi động lại máy là cách chắc
-> chắn nhất, đặc biệt nếu sau này chạy bằng Task Scheduler.
+> ⚠️ Đây là Settings **tài khoản của bạn**, khác hoàn toàn Settings repo
+> khách hàng (`github.com/<khách>/<repo>/settings`) — cái khách không cho vào.
+> Nếu bạn từng thêm SSH key thì đã vào khu vực này rồi.
+
+| Bước | Làm gì |
+|---|---|
+| 1 | Vào link trên |
+| 2 | Chọn tab **"Tokens (classic)"** — KHÔNG phải "Fine-grained tokens" |
+| 3 | **"Generate new token"** → **"Generate new token (classic)"** |
+| 4 | **Note**: gõ tên bất kỳ, ví dụ `build-watcher` |
+| 5 | **Expiration**: chọn `90 days` |
+| 6 | **Select scopes**: tích ô **`repo`** (tích ô cha là đủ) |
+| 7 | Kéo xuống cuối → **"Generate token"** |
+| 8 | Copy chuỗi bắt đầu bằng **`ghp_...`** — **chỉ hiện đúng 1 lần** |
+
+Đặt vào máy — Command Prompt **as Administrator**:
+```
+setx BUILD_WATCHER_GITHUB_TOKEN "ghp_dan-chuoi-vao-day" /M
+```
+
+### 5.2. Token GitLab — lấy ở đâu, tích quyền gì
+
+**Địa chỉ**: https://gitlab.com/-/user_settings/personal_access_tokens
+
+Hoặc bấm tay: ảnh đại diện góc trên phải → **Preferences** → menu trái
+**Access Tokens**
+
+> Nếu dùng GitLab nội bộ công ty, thay `gitlab.com` bằng địa chỉ GitLab đó.
+
+| Bước | Làm gì |
+|---|---|
+| 1 | Vào link trên |
+| 2 | Bấm **"Add new token"** |
+| 3 | **Token name**: gõ tên bất kỳ, ví dụ `build-watcher` |
+| 4 | **Expiration date**: chọn ngày hết hạn |
+| 5 | **Select scopes**: tích ô **`api`** |
+| 6 | Bấm **"Create personal access token"** |
+| 7 | Copy chuỗi bắt đầu bằng **`glpat-...`** — **chỉ hiện đúng 1 lần** |
+
+Đặt vào máy — Command Prompt **as Administrator**:
+```
+setx BUILD_WATCHER_GITLAB_TOKEN "glpat-dan-chuoi-vao-day" /M
+```
+
+### 5.3. Bảng đối chiếu nhanh
+
+| | GitHub | GitLab |
+|---|---|---|
+| Trang lấy token | `github.com/settings/tokens` | `gitlab.com/-/user_settings/personal_access_tokens` |
+| Loại token | **Tokens (classic)** | Personal Access Token |
+| Quyền cần tích | **`repo`** | **`api`** |
+| Chuỗi bắt đầu bằng | `ghp_` | `glpat-` |
+| Tên biến môi trường | `BUILD_WATCHER_GITHUB_TOKEN` | `BUILD_WATCHER_GITLAB_TOKEN` |
+
+### 5.4. Sau khi đặt token
+
+**Khởi động lại máy.** Bắt buộc.
+
+> `setx` chỉ có hiệu lực với **cửa sổ mở sau đó**, không áp dụng cho cửa sổ
+> đang mở. Nếu sau này chạy bằng Task Scheduler thì càng phải khởi động lại,
+> vì service chỉ nạp biến môi trường 1 lần lúc khởi động.
+
+Sau khi khởi động lại, chạy `check.bat` để xác nhận.
+
+### 5.5. Lưu ý bảo mật
+
+Token quyền `repo` (GitHub) có toàn quyền trên **mọi repo tài khoản đó truy
+cập được — kể cả repo của khách hàng khác**. Token này lại nằm thường trực
+trên máy build.
+
+Nếu tài khoản bạn tham gia nhiều repo khách hàng, cân nhắc:
+- Đặt hạn ngắn (90 ngày) và xoay vòng, **không** để vĩnh viễn
+- Hoặc dùng 1 tài khoản GitHub riêng cho việc build, nhờ khách add làm
+  collaborator vào **đúng 1 repo** — khi đó token chỉ chạm được 1 repo
 
 ---
 
