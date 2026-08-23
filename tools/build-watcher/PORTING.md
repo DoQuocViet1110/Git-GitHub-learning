@@ -439,6 +439,317 @@ Không cần cài lại. Làm 3 bước:
 
 ---
 
+## PHỤ LỤC — Ví dụ hoàn chỉnh từ đầu đến cuối
+
+> Ví dụ này dùng số liệu giả định cụ thể để bạn hình dung. Thay các giá trị
+> **in đậm** bằng giá trị thật của bạn.
+
+### Bối cảnh giả định
+
+| Thứ | Giá trị trong ví dụ |
+|---|---|
+| Repo khách hàng (**A**) | `https://github.com/acme-corp/vehicle-fw` |
+| Clone bằng | **SSH** → `git@github.com:acme-corp/vehicle-fw.git` |
+| GitLab của team (**B**) | `https://gitlab.com/my-team/build-artifacts` |
+| GitLab Project ID | `61234567` |
+| Máy build | Windows, tài khoản Windows `CORP\vietdq` |
+| Dự án build bằng | `build.bat`, nhận tham số preset |
+| Preset | `Debug`, `Release` |
+| Kết quả build nằm ở | `out/Debug/firmware.hex`, `out/Release/firmware.hex` |
+
+Vì máy dùng **SSH** và muốn lưu file trên **GitLab team** → chọn **phương án B**
+(`report_to_github: false` + `artifact_target: gitlab`).
+
+---
+
+### BƯỚC 1 — Kiểm tra máy build
+
+Mở **Command Prompt**, chạy từng lệnh:
+
+```
+git --version
+```
+> Kết quả mong đợi: `git version 2.45.0.windows.1`
+
+```
+ssh -T git@github.com
+```
+> Kết quả mong đợi: `Hi vietdq-acme! You've successfully authenticated...`
+>
+> Ghi lại tên tài khoản GitHub: `vietdq-acme`
+> Ghi lại tài khoản Windows đang dùng (gõ `whoami`): `CORP\vietdq`
+
+Kiểm tra dự án build tay được không:
+```
+cd C:\work\vehicle-fw
+build.bat Debug
+```
+> Phải build thành công và sinh ra `out\Debug\firmware.hex`
+
+---
+
+### BƯỚC 2 — Lấy tool về và copy
+
+```
+git clone -b feature/Build_Watcher https://github.com/DoQuocViet1110/Git-GitHub-learning.git C:\temp-tool
+```
+
+Copy thư mục tool sang đúng chỗ:
+```
+xcopy /E /I C:\temp-tool\tools\build-watcher C:\build-watcher
+```
+
+Xoá thư mục tạm:
+```
+rmdir /S /Q C:\temp-tool
+```
+
+Kiểm tra đã copy đúng:
+```
+dir C:\build-watcher
+```
+> Phải thấy: `setup.bat`, `run.bat`, `check.bat`, `build-once.bat`,
+> `setup_wizard.py`, `README.md`, `PORTING.md`, `build_watcher`, `tests`
+>
+> **Không được có**: `python`, `data`, `config.json`
+
+---
+
+### BƯỚC 3 — Lấy GitLab Project ID
+
+1. Mở trình duyệt vào `https://gitlab.com/my-team/build-artifacts`
+2. Ngay dưới tên project thấy dòng `Project ID: 61234567`
+3. Ghi lại: **`61234567`**
+
+> ⚠️ Phải là trang **project**, không phải trang group (`gitlab.com/my-team`).
+
+---
+
+### BƯỚC 4 — Tạo token GitLab
+
+1. Vào `https://gitlab.com/-/user_settings/personal_access_tokens`
+2. Bấm **Add new token**
+3. **Token name**: `build-watcher`
+4. **Expiration date**: chọn ngày cách 90 ngày
+5. **Select scopes**: tích ô **`api`**
+6. Bấm **Create personal access token**
+7. Copy chuỗi hiện ra, ví dụ: `glpat-AbCdEf123456GhIjKl`
+
+Mở **Command Prompt as Administrator** (chuột phải → Run as administrator):
+```
+setx BUILD_WATCHER_GITLAB_TOKEN "glpat-AbCdEf123456GhIjKl" /M
+```
+> Kết quả mong đợi: `SUCCESS: Specified value was saved.`
+
+**Khởi động lại máy.**
+
+---
+
+### BƯỚC 5 — Chạy cài đặt
+
+Nhấn đúp **`C:\build-watcher\setup.bat`**.
+
+Trả lời các câu hỏi như sau:
+
+```
+Dia chi repo tren GitHub
+   (vi du: https://github.com/ten-khach-hang/ten-repo): git@github.com:acme-corp/vehicle-fw.git
+  -> Chu so huu : acme-corp
+  -> Ten repo   : vehicle-fw
+  -> Giao thuc  : SSH
+
+Ten branch chua file yeu cau build [build-requests]:            <- nhấn Enter
+Ten file yeu cau build [Build_Infor.txt]:                       <- nhấn Enter
+
+Ten file script de build [build.bat]:                           <- nhấn Enter
+Cac preset cho phep (cach nhau bang dau phay) [Debug,Release]:   <- nhấn Enter
+Duong dan file ket qua [build/*/*.elf,...]: out/*/*.hex          <- GÕ VÀO
+
+  !!! LUU Y QUAN TRONG - repo nay dung SSH !!!
+  ...
+Bat bao ket qua len GitHub? [y/N]:                              <- nhấn Enter (= No)
+
+3b. LUU FILE KET QUA (.zip) O DAU
+  1. github   2. gitlab   3. local
+Chon 1, 2 hoac 3 [3]: 2                                         <- GÕ 2
+
+Dia chi GitLab [https://gitlab.com]:                            <- nhấn Enter
+Project ID (chi gom chu so): 61234567                           <- GÕ VÀO
+Ten goi luu tru tren GitLab (Enter = tu dat theo ten branch):    <- nhấn Enter
+
+Danh sach email duoc phep (* = tat ca) [*]:                     <- nhấn Enter
+```
+
+Chờ đến khi thấy:
+```
+====================================================================
+  DA TAO XONG config.json
+====================================================================
+```
+
+---
+
+### BƯỚC 6 — Kiểm tra file cấu hình
+
+Mở `C:\build-watcher\config.json` bằng **Notepad**. Nội dung phải giống:
+
+```json
+{
+  "repo_url": "git@github.com:acme-corp/vehicle-fw.git",
+  "owner": "acme-corp",
+  "repo": "vehicle-fw",
+  "trigger_branch": "build-requests",
+  "request_file": "Build_Infor.txt",
+  "poll_interval_seconds": 60,
+  "root": "C:/build-watcher/data",
+  "build_script": "build.bat",
+  "build_timeout_seconds": 3600,
+  "artifact_globs": [
+    "out/*/*.hex"
+  ],
+  "allowed_committers": [
+    "*"
+  ],
+  "allowed_presets": [
+    "Debug",
+    "Release"
+  ],
+  "report_to_github": false,
+  "status_context": "build-watcher/local",
+  "artifact_target": "gitlab",
+  "gitlab_url": "https://gitlab.com",
+  "gitlab_project_id": "61234567"
+}
+```
+
+Sai chỗ nào thì sửa thẳng trong Notepad rồi **Save** (Ctrl+S).
+
+---
+
+### BƯỚC 7 — Tạo branch trên GitHub khách hàng
+
+Làm trên **trình duyệt**:
+
+1. Vào `https://github.com/acme-corp/vehicle-fw`
+2. Bấm ô chọn branch (đang ghi `main`)
+3. Gõ: `build-requests`
+4. Bấm **"Create branch: build-requests from main"**
+5. Bấm **Add file** → **Create new file**
+6. Ô tên file gõ: `Build_Infor.txt`
+7. Ô nội dung gõ:
+   ```
+   # File yeu cau build
+   ```
+8. Kéo xuống, bấm **Commit new file**
+
+---
+
+### BƯỚC 8 — Kiểm tra kết nối
+
+Nhấn đúp **`C:\build-watcher\check.bat`**.
+
+Kết quả đúng:
+```
+2026-08-23 09:15:02 INFO  build_watcher: trigger branch build-requests is at a1b2c3d4e5f6
+2026-08-23 09:15:02 INFO  build_watcher: request file Build_Infor.txt found
+2026-08-23 09:15:02 INFO  build_watcher: allowlisted requesters: *
+2026-08-23 09:15:02 INFO  build_watcher: build script: build.bat
+2026-08-23 09:15:02 INFO  build_watcher: artifacts go to: gitlab
+2026-08-23 09:15:02 INFO  build_watcher: artifacts go to GitLab project 61234567 at https://gitlab.com
+2026-08-23 09:15:02 INFO  build_watcher: check passed
+
+  ==> TAT CA DEU TOT. Co the chay run.bat.
+```
+
+---
+
+### BƯỚC 9 — Chạy thử lần 1 (ghi mốc)
+
+Nhấn đúp **`build-once.bat`**.
+
+```
+2026-08-23 09:16:10 INFO  build_watcher.watcher: first run; baseline set to a1b2c3d4e5f6
+2026-08-23 09:16:10 INFO  build_watcher: processed 0 request(s)
+```
+
+> `processed 0 request` là **ĐÚNG**. Lần đầu tool chỉ ghi nhớ vị trí hiện tại
+> làm mốc, chưa build gì.
+
+---
+
+### BƯỚC 10 — Gửi yêu cầu build thật
+
+Trên **trình duyệt**:
+
+1. Vào `https://github.com/acme-corp/vehicle-fw`
+2. Chuyển sang branch **`build-requests`**
+3. Bấm vào file `Build_Infor.txt`
+4. Bấm biểu tượng **cây bút chì** (Edit this file)
+5. Thêm 1 dòng ở cuối:
+   ```
+   [Build] - [feature/them-canh-bao-nhiet-do] - [Debug]
+   ```
+   > Thay `feature/them-canh-bao-nhiet-do` bằng tên branch thật cần build
+6. Bấm **Commit changes**
+
+---
+
+### BƯỚC 11 — Chạy thử lần 2 (build thật)
+
+Nhấn đúp **`build-once.bat`**.
+
+```
+INFO  watcher: 1 new request commit(s) since a1b2c3d4e5f6
+INFO  watcher: request feature-them-canh-bao-nhiet-do-Debug-f7e8d9c0b1a2 from vietdq@acme.com
+INFO  builder: building ... C:\build-watcher\data\work\wt-3a4b5c6d7e8f\build.bat Debug
+INFO  packager: packaged 1 file(s) into C:\build-watcher\data\artifacts\feature-them-canh-bao-nhiet-do-Debug-f7e8d9c0b1a2.zip
+INFO  gitlab_client: uploaded ...zip to GitLab package feature-them-canh-bao-nhiet-do-Debug-f7e8d9c0b1a2/2026.823.91745
+INFO  watcher: request ... -> ok (95s): built in 92s
+INFO  build_watcher: processed 1 request(s)
+```
+
+Thấy **`-> ok`** là thành công.
+
+---
+
+### BƯỚC 12 — Lấy file kết quả
+
+1. Vào `https://gitlab.com/my-team/build-artifacts`
+2. Menu bên trái: **Deploy** → **Package Registry**
+3. Thấy gói tên `feature-them-canh-bao-nhiet-do-Debug-f7e8d9c0b1a2`
+4. Bấm vào → tải file `.zip` về
+5. Giải nén → có `out/Debug/firmware.hex`
+
+> File cũng được lưu sẵn trên máy tại
+> `C:\build-watcher\data\artifacts\`
+
+---
+
+### BƯỚC 13 — Cho chạy liên tục
+
+Nhấn đúp **`run.bat`** và giữ cửa sổ mở.
+
+Từ giờ, mỗi khi ai đó thêm dòng `[Build] - [ten-branch]` vào `Build_Infor.txt`
+và commit, máy build sẽ tự build trong vòng 60 giây và đẩy file lên GitLab.
+
+Muốn chạy ngầm không cần giữ cửa sổ → xem Giai đoạn 8, nhớ chọn chạy dưới
+tài khoản Windows `CORP\vietdq` (tài khoản đã ghi ở Bước 1).
+
+---
+
+### Tổng kết ví dụ: đã đụng vào những gì
+
+| Nơi | Đã làm gì |
+|---|---|
+| Máy build | Copy tool vào `C:\build-watcher`, chạy `setup.bat`, đặt token GitLab |
+| Repo GitHub khách (**A**) | Tạo branch `build-requests` + file `Build_Infor.txt`. **Không** ghi gì khác |
+| GitLab team (**B**) | Nhận file `.zip` trong Package Registry |
+
+Repo khách hàng chỉ bị thêm **1 branch chứa 1 file text**, ngoài ra code và
+lịch sử của họ không bị đụng tới.
+
+---
+
 ## Checklist rút gọn (in ra mang theo)
 
 ```
