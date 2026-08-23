@@ -3,6 +3,11 @@
 > **Đọc file này từ trên xuống dưới.** Mỗi bước đều ghi rõ phải làm gì,
 > gõ gì, và kết quả đúng trông như thế nào. Không cần biết lập trình.
 
+> 📦 **Lần đầu cài trên 1 máy mới, hoặc đổi sang repo GitHub/GitLab khác?**
+> → Đọc **[PORTING.md](PORTING.md)** trước. File đó có bảng thu thập thông
+> tin cần điền trước khi ngồi vào máy, danh sách file **không được** copy từ
+> máy cũ, và checklist rút gọn để in ra mang theo.
+
 ---
 
 ## MỤC LỤC
@@ -179,6 +184,7 @@ khách hàng (cái mà khách không cho bạn vào).
 | `config.json` | File cấu hình — `setup.bat` tự tạo ra | ⚙️ Chỉ sửa khi đổi repo |
 | `Build_Infor.example.txt` | File mẫu để đưa lên GitHub | 📄 Copy nội dung |
 | `README.md` | Chính là file bạn đang đọc | 📖 Đọc |
+| `PORTING.md` | Hướng dẫn mang sang máy khác / repo khác | 📖 Đọc khi cài lần đầu |
 | `config.example.json` | File cấu hình mẫu | ❌ Không đụng |
 | `setup_wizard.py` | Chương trình hỏi thông tin để tạo config | ❌ Không đụng |
 | `build_watcher/` | Mã nguồn của tool | ❌ Không đụng |
