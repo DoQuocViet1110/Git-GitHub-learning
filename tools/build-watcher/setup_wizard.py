@@ -175,6 +175,60 @@ def main() -> int:
     )
     print()
 
+    # --- Where the zip goes -------------------------------------------
+    print("-" * 68)
+    print("3b. LUU FILE KET QUA (.zip) O DAU")
+    print("-" * 68)
+    print("  1. github  - Luu vao muc Releases cua repo khach hang")
+    print("  2. gitlab  - Luu sang project GitLab cua team ban")
+    print("               (dung khi khach KHONG cho ghi vao repo cua ho)")
+    print("  3. local   - Chi luu tren may nay, khong day di dau")
+    print()
+    artifact_target = ""
+    while artifact_target not in ("github", "gitlab", "local"):
+        answer = ask("Chon 1, 2 hoac 3", "1" if report_to_github else "3")
+        artifact_target = {
+            "1": "github",
+            "2": "gitlab",
+            "3": "local",
+            "github": "github",
+            "gitlab": "gitlab",
+            "local": "local",
+        }.get(answer.strip().lower(), "")
+        if not artifact_target:
+            print("  -> Chi nhap 1, 2 hoac 3.")
+
+    gitlab_url = "https://gitlab.com"
+    gitlab_project_id = ""
+    gitlab_package_name = ""
+    if artifact_target == "gitlab":
+        print()
+        print("  Can 2 thong tin tu GitLab cua team:")
+        print("    - Dia chi GitLab (vi du https://gitlab.com, hoac GitLab noi bo)")
+        print("    - Project ID: mo trang chinh cua project tren GitLab, so nay")
+        print("      hien ngay duoi ten project (dang 12345678)")
+        print()
+        gitlab_url = ask("Dia chi GitLab", "https://gitlab.com")
+        while not gitlab_project_id:
+            gitlab_project_id = ask("Project ID (chi gom chu so)").strip()
+            if not gitlab_project_id.isdigit():
+                print("  -> Project ID phai la so. Xem tren trang chinh cua project.")
+                gitlab_project_id = ""
+        gitlab_package_name = ask(
+            "Ten goi luu tru tren GitLab (Enter = tu dat theo ten branch)", " "
+        ).strip()
+        print()
+        print("  Sau khi cai xong, can dat token GitLab 1 lan:")
+        print("    1. Vao GitLab -> Preferences -> Access Tokens")
+        print("    2. Tao token moi, tich quyen 'api'")
+        print("    3. Command Prompt as Administrator:")
+        print("       setx BUILD_WATCHER_GITLAB_TOKEN \"dan-token-vao-day\" /M")
+        print("    4. Khoi dong lai may")
+        print()
+        print("  (Neu may nay da tung 'git push' len GitLab qua HTTPS thi tool")
+        print("   se tu muon thong tin dang nhap do, khong can lam buoc tren.)")
+    print()
+
     # --- Access control -----------------------------------------------
     print("-" * 68)
     print("4. AI DUOC PHEP YEU CAU BUILD")
@@ -201,7 +255,13 @@ def main() -> int:
         "allowed_presets": allowed_presets,
         "report_to_github": report_to_github,
         "status_context": "build-watcher/local",
+        "artifact_target": artifact_target,
     }
+    if artifact_target == "gitlab":
+        config["gitlab_url"] = gitlab_url
+        config["gitlab_project_id"] = gitlab_project_id
+        if gitlab_package_name:
+            config["gitlab_package_name"] = gitlab_package_name
 
     CONFIG_PATH.write_text(
         json.dumps(config, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"

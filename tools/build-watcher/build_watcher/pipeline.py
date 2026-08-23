@@ -26,9 +26,23 @@ class RequestResult:
 
 
 class BuildPipeline:
-    def __init__(self, repo, github, builder, packager, config: Config) -> None:
+    """Runs one request, reporting status and artifacts to two seams.
+
+    They are separate because they genuinely go to different places: a
+    commit status can only be attached where the commit lives (the
+    customer's GitHub repo), while the artifact is just a file and can be
+    stored anywhere -- including a GitLab project the team controls, for
+    customers who will not accept build output in their own repository.
+    ``publisher`` defaults to ``github`` so the common case stays one
+    destination.
+    """
+
+    def __init__(
+        self, repo, github, builder, packager, config: Config, publisher=None
+    ) -> None:
         self.repo = repo
         self.github = github
+        self.publisher = publisher if publisher is not None else github
         self.builder = builder
         self.packager = packager
         self.config = config
@@ -84,7 +98,7 @@ class BuildPipeline:
                 )
             )
 
-        url = self.github.publish_artifact(
+        url = self.publisher.publish_artifact(
             tag="build/{0}".format(request.tag),
             name=request.tag,
             notes=self._notes(request, outcome, built_sha),

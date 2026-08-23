@@ -107,6 +107,34 @@ class PipelineTest(unittest.TestCase):
         self.assertIn("internal error", result.description)
         self.assertEqual(self.terminal_states(), ["failure"])
 
+    def test_artifacts_can_go_somewhere_other_than_the_status_host(self):
+        """The GitLab fallback: statuses still land on the customer's
+        GitHub repo, while the zip goes to a project the team controls.
+        """
+        elsewhere = NullGitHubClient("gitlab")
+        pipeline = BuildPipeline(
+            self.repo,
+            self.github,
+            self.builder,
+            self.packager,
+            self.config,
+            publisher=elsewhere,
+        )
+
+        result = pipeline.process(request())
+
+        self.assertTrue(result.ok)
+        self.assertEqual(len(elsewhere.artifacts), 1, "zip should go to publisher")
+        self.assertEqual(self.github.artifacts, [], "not to the status host")
+        self.assertEqual(self.terminal_states(), ["success"], "status still reported")
+
+    def test_publisher_defaults_to_the_status_host(self):
+        pipeline = BuildPipeline(
+            self.repo, self.github, self.builder, self.packager, self.config
+        )
+        pipeline.process(request())
+        self.assertEqual(len(self.github.artifacts), 1)
+
     def test_publishing_can_be_disabled(self):
         self.config.publish_artifacts = False
         result = self.pipeline().process(request())

@@ -14,6 +14,9 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 TOKEN_ENV_VAR = "BUILD_WATCHER_GITHUB_TOKEN"
+GITLAB_TOKEN_ENV_VAR = "BUILD_WATCHER_GITLAB_TOKEN"
+
+_ARTIFACT_TARGETS = ("github", "gitlab", "local")
 
 # A literal "*" in allowed_committers means "trust anyone who can push to
 # the trigger branch" -- a deliberate, visible opt-out of the allowlist,
@@ -80,6 +83,16 @@ class Config:
     upload_base: str = "https://uploads.github.com"
     publish_artifacts: bool = True
 
+    # Where the zip goes. "github" puts it on the watched repo; "gitlab"
+    # sends it to a project the team owns, for customers who will not
+    # accept build output in their repository; "local" keeps it only in
+    # artifact_dir. Commit statuses are unaffected -- they can only be
+    # attached where the commit lives.
+    artifact_target: str = "github"
+    gitlab_url: str = "https://gitlab.com"
+    gitlab_project_id: str = ""
+    gitlab_package_name: str = ""
+
     def __post_init__(self) -> None:
         self.root = Path(self.root)
         self.clone_dir = Path(self.clone_dir or self.root / "repo")
@@ -90,6 +103,18 @@ class Config:
 
         if self.poll_interval_seconds < 5:
             raise ConfigError("poll_interval_seconds must be at least 5")
+        if self.artifact_target not in _ARTIFACT_TARGETS:
+            raise ConfigError(
+                "artifact_target must be one of {0}, got {1!r}".format(
+                    ", ".join(sorted(_ARTIFACT_TARGETS)), self.artifact_target
+                )
+            )
+        if self.artifact_target == "gitlab" and not self.gitlab_project_id:
+            raise ConfigError(
+                "artifact_target is 'gitlab' but gitlab_project_id is empty; "
+                "find it on the GitLab project's main page, under the project "
+                "name (a number such as 12345678)"
+            )
         if not self.allowed_committers:
             raise ConfigError(
                 "allowed_committers must list at least one email; an empty list "
@@ -188,4 +213,31 @@ def read_token(
         "on this machine for the repository's host (the token is then "
         "borrowed from git's own credential helper -- no separate token "
         "needed)".format(TOKEN_ENV_VAR)
+    )
+
+
+def read_gitlab_token(gitlab_url: str, explicit: Optional[str] = None) -> str:
+    """Token for GitLab uploads: explicit, environment, then git.
+
+    Same order as read_token, and for the same reason: a machine that
+    already pushes to this GitLab over HTTPS has a credential worth
+    reusing instead of asking the operator to mint another token.
+    """
+    token = explicit or os.environ.get(GITLAB_TOKEN_ENV_VAR, "")
+    if token:
+        return token
+
+    from . import git_credentials
+
+    host = git_credentials.host_from_url(gitlab_url)
+    if host:
+        borrowed = git_credentials.fill_credential(host)
+        if borrowed:
+            return borrowed
+
+    raise ConfigError(
+        "no GitLab token: set {0} to a GitLab personal access token with the "
+        "'api' scope (Preferences -> Access Tokens on your GitLab), or make "
+        "sure `git push` over HTTPS already works on this machine for "
+        "{1}".format(GITLAB_TOKEN_ENV_VAR, host or gitlab_url)
     )

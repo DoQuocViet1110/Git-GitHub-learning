@@ -12,10 +12,11 @@ from pathlib import Path
 from typing import Optional
 
 from .builder import Builder
-from .config import Config, read_token
+from .config import Config, read_gitlab_token, read_token
 from .git_credentials import host_from_url, is_ssh_url
 from .git_repo import GitRepo
 from .github_client import GitHubClient, NullGitHubClient
+from .gitlab_client import GitLabClient
 from .packager import Packager
 from .pipeline import BuildPipeline
 from .state import StateStore
@@ -47,6 +48,7 @@ def build_watcher(config: Config, dry_run: bool = False, token: Optional[str] = 
     pipeline = BuildPipeline(
         repo=repo,
         github=github,
+        publisher=_artifact_publisher(config, github, dry_run),
         builder=Builder(
             script_name=config.build_script,
             log_dir=config.log_dir,
@@ -61,6 +63,20 @@ def build_watcher(config: Config, dry_run: bool = False, token: Optional[str] = 
         pipeline=pipeline,
         config=config,
     )
+
+
+def _artifact_publisher(config: Config, github, dry_run: bool):
+    """Pick where the zip goes, independently of where statuses go."""
+    if dry_run or config.artifact_target == "local":
+        return NullGitHubClient("dry-run" if dry_run else "local-only")
+    if config.artifact_target == "gitlab":
+        return GitLabClient(
+            base_url=config.gitlab_url,
+            project_id=config.gitlab_project_id,
+            token=read_gitlab_token(config.gitlab_url),
+            package_name=config.gitlab_package_name,
+        )
+    return github
 
 
 def setup_logging(log_dir: Path, verbose: bool = False) -> None:

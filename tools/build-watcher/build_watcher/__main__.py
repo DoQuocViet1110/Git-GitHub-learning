@@ -9,7 +9,7 @@ import sys
 import threading
 
 from .app import build_watcher, setup_logging
-from .config import Config, ConfigError, read_token
+from .config import Config, ConfigError, read_gitlab_token, read_token
 from .git_credentials import host_from_url, is_ssh_url
 
 log = logging.getLogger("build_watcher")
@@ -89,6 +89,20 @@ def _check(config: Config, dry_run: bool) -> int:
         except ConfigError as exc:
             problems.append(str(exc))
 
+    # Checked here rather than at upload time: a missing GitLab token
+    # would otherwise surface only after a build has already succeeded,
+    # stranding the artifact on the machine with no clear reason why.
+    if not dry_run and config.artifact_target == "gitlab":
+        try:
+            read_gitlab_token(config.gitlab_url)
+            log.info(
+                "artifacts go to GitLab project %s at %s",
+                config.gitlab_project_id,
+                config.gitlab_url,
+            )
+        except ConfigError as exc:
+            problems.append(str(exc))
+
     try:
         watcher = build_watcher(config, dry_run=True)
         watcher.repo.fetch()
@@ -108,6 +122,7 @@ def _check(config: Config, dry_run: bool) -> int:
 
     log.info("allowlisted requesters: %s", ", ".join(config.allowed_committers))
     log.info("build script: %s", config.build_script)
+    log.info("artifacts go to: %s", config.artifact_target)
 
     if problems:
         for problem in problems:

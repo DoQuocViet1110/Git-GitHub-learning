@@ -15,6 +15,7 @@
 | [4](#4-cài-đặt--làm-1-lần-duy-nhất) | **Cài đặt (làm 1 lần)** |
 | [5](#5-chuẩn-bị-phía-github--làm-1-lần-duy-nhất) | **Chuẩn bị phía GitHub (làm 1 lần)** |
 | [6](#6-dùng-hằng-ngày) | Dùng hằng ngày |
+| [6b](#6b-chọn-nơi-lưu-file-kết-quả-github--gitlab--chỉ-máy) | **Lưu kết quả sang GitLab** (khi khách không cho ghi vào repo họ) |
 | [7](#7-lấy-kết-quả-build-ở-đâu) | Lấy kết quả build ở đâu |
 | [8](#8-cho-tool-chạy-ngầm-không-cần-giữ-cửa-sổ) | Cho tool chạy ngầm |
 | [9](#9-khắc-phục-sự-cố) | **Khắc phục sự cố** |
@@ -334,6 +335,88 @@ Trên GitHub (từ máy nào cũng được, không cần ngồi máy build):
 
 ---
 
+## 6b. Chọn nơi lưu file kết quả (GitHub / GitLab / chỉ máy)
+
+Nếu khách hàng **không cho ghi bất cứ thứ gì vào repo của họ**, bạn vẫn dùng
+được tool — chỉ cần đổi nơi lưu file `.zip` sang GitLab của team.
+
+### Điểm cần hiểu: 2 việc riêng biệt
+
+| Việc | Đi đâu được | Vì sao |
+|---|---|---|
+| Gắn dấu ✅/❌ lên commit | **Chỉ GitHub khách hàng** | Commit nằm ở đó, không gắn chỗ khác được |
+| Lưu file `.zip` | **GitHub / GitLab / chỉ máy** — bạn chọn | Chỉ là file, để đâu cũng được |
+
+Hai việc này **độc lập**. Ví dụ có thể: vẫn gắn dấu tick trên GitHub khách,
+nhưng file `.zip` đẩy sang GitLab team.
+
+### 3 lựa chọn
+
+Trong `config.json`, sửa dòng `"artifact_target"`:
+
+| Giá trị | File .zip lưu ở đâu | Dùng khi nào |
+|---|---|---|
+| `"github"` | Mục Releases của repo khách hàng | Mặc định, khi khách đồng ý |
+| `"gitlab"` | Project GitLab của team bạn | **Khách không cho ghi vào repo họ** |
+| `"local"` | Chỉ trên máy build | Không cần chia sẻ file |
+
+### Cách bật lưu sang GitLab
+
+**Bước 1 — Lấy Project ID trên GitLab**
+
+Mở trang chính của project trên GitLab. Ngay **dưới tên project** có 1 dãy số,
+ví dụ `87654321`. Đó là Project ID.
+
+**Bước 2 — Sửa `config.json`**
+
+```json
+"artifact_target": "gitlab",
+"gitlab_url": "https://gitlab.com",
+"gitlab_project_id": "87654321",
+```
+
+> Nếu team dùng GitLab nội bộ công ty, đổi `gitlab_url` thành địa chỉ đó,
+> ví dụ `"https://gitlab.congty.vn"`.
+
+**Bước 3 — Đặt token GitLab (làm 1 lần)**
+
+1. Vào GitLab → ảnh đại diện góc trên phải → **Preferences** → **Access Tokens**
+2. Bấm **Add new token**, đặt tên bất kỳ
+3. Tích quyền **`api`**
+4. Bấm tạo → **copy chuỗi hiện ra ngay** (chỉ hiện 1 lần)
+5. Trên máy build, mở **Command Prompt as Administrator**, chạy:
+   ```
+   setx BUILD_WATCHER_GITLAB_TOKEN "dan-chuoi-token-vao-day" /M
+   ```
+6. **Khởi động lại máy**
+7. Nhấn đúp `check.bat` → phải thấy dòng
+   `artifacts go to GitLab project 87654321`
+
+> 💡 Nếu máy build **đã từng `git push` lên GitLab đó qua HTTPS**, có thể bỏ
+> qua Bước 3 — tool tự mượn thông tin đăng nhập sẵn có, giống hệt cách nó làm
+> với GitHub.
+
+### Lấy file .zip trên GitLab ở đâu
+
+Vào project GitLab → menu trái **Deploy** → **Package Registry**. Mỗi lần build
+tạo 1 gói riêng, tên theo branch, bên trong có file `.zip`.
+
+### Tổ hợp hay dùng nhất cho máy công ty (SSH)
+
+Máy dùng SSH nên không gắn được dấu tick, nhưng vẫn lưu được file:
+
+```json
+"report_to_github": false,
+"artifact_target": "gitlab",
+"gitlab_project_id": "87654321",
+```
+
+Kết quả: build tự động chạy, file `.zip` tự lên GitLab team, không đụng gì
+tới repo khách hàng ngoài việc **đọc** code. Đây là cấu hình "sạch" nhất với
+khách hàng khó tính.
+
+---
+
 ## 7. Lấy kết quả build ở đâu
 
 ### Cách 1 — Trên GitHub (khuyên dùng)
@@ -464,6 +547,9 @@ Mở `C:\build-watcher\data\logs\build-watcher.log`, tìm dòng có chữ `ERROR
 | `HTTP 403` | Tài khoản không có quyền ghi | Nhờ khách cấp quyền **Write** cho tài khoản |
 | `HTTP 404` | Sai tên repo trong `config.json` | Chạy lại `setup.bat` |
 | `[no-github]` | Đang tắt tính năng báo cáo | Sửa `config.json`, đổi `"report_to_github": false` thành `true` |
+| `no GitLab token` | Chưa đặt token GitLab | Làm Bước 3 của mục 6b |
+| `HTTP 404` khi upload GitLab | Sai `gitlab_project_id` | Xem lại Project ID trên trang chính project GitLab |
+| `HTTP 401` khi upload GitLab | Token GitLab sai/hết hạn, hoặc thiếu quyền `api` | Tạo token mới, nhớ tích quyền `api` |
 
 ### 9.5. Muốn build lại đúng yêu cầu cũ
 
@@ -511,6 +597,8 @@ Không chép thư mục cũ sang. Làm lại từ đầu cho sạch:
 | Dự án sinh file kết quả ở chỗ khác | Sửa `"artifact_globs"` trong `config.json` |
 | Muốn build nhanh/chậm hơn | Sửa `"poll_interval_seconds"` (tính bằng giây) |
 | Muốn giới hạn ai được build | Sửa `"allowed_committers"`, thay `"*"` bằng danh sách email |
+| Khách không cho ghi vào repo họ | Sửa `"artifact_target"` thành `"gitlab"` — xem mục 6b |
+| Đổi sang GitLab project khác | Sửa `"gitlab_project_id"` |
 | Đổi máy | Làm lại từ đầu theo 10.2 |
 
 > **Không bao giờ cần sửa file nào trong thư mục `build_watcher/`.**
@@ -631,6 +719,7 @@ bản giả lập khi kiểm thử:
 |---|---|---|
 | `git_repo.GitRepo` | `fetch` `remote_head` `ref_exists` `commits_touching` `file_at` `worktree` | toàn bộ lệnh git, phân tích kết quả, vòng đời worktree |
 | `github_client.GitHubClient` | `set_commit_status` `publish_artifact` | xác thực, thử lại, xử lý release trùng tag |
+| `gitlab_client.GitLabClient` | `publish_artifact` | API gói chung của GitLab, ràng buộc semver của số phiên bản |
 | `git_credentials` | `fill_credential` `host_from_url` | mượn credential của git, chặn treo |
 | `state.StateStore` | `last_sha` `advance` | ghi nguyên tử, phục hồi khi file hỏng |
 | `request_format` | `parse_build_request` | định dạng, chống tiêm tham số vào git |
@@ -651,6 +740,9 @@ bản giả lập khi kiểm thử:
 | `GCM_INTERACTIVE=never` + timeout | Nếu chưa có credential, GCM có thể mở trình duyệt và treo vô hạn |
 | Chỉ dùng thư viện chuẩn của Python | Máy khách hàng thường chặn `pip install` |
 | Không dùng `for /f` với lệnh trong `setup.bat` | Cách viết đó nuốt mất bàn phím người dùng — đã kiểm chứng |
+| Tách "nơi báo trạng thái" khỏi "nơi lưu artifact" | Dấu tick chỉ gắn được nơi có commit; file thì để đâu cũng được. Gộp làm một sẽ chặn mất phương án GitLab |
+| GitLab dùng API gói chung, không dùng Releases | Release của GitLab cần git tag trong chính project đó, mà code lại nằm ở GitHub |
+| Số phiên bản gói GitLab suy từ thời điểm build | GitLab bắt buộc semver, nên tên branch/preset/sha phải nằm ở tên gói và tên file |
 
 ### 13.3. Chạy kiểm thử
 
@@ -676,6 +768,8 @@ Chạy thật trên Windows 10 Pro, Python 3.12.10 bản rút gọn, repo GitHub
 | Clone + build qua **remote SSH** (`git@github.com:...`) | chạy được bình thường |
 | SSH key dùng cho REST API | trả về `HTTP 401` — xác nhận không dùng được, phải có token |
 | Thông báo lỗi khi SSH + bật báo cáo mà không có token | nêu đúng nguyên nhân SSH và cả 2 cách sửa |
+| Tách nơi báo trạng thái và nơi lưu artifact | dấu tick vẫn về GitHub, file `.zip` đi GitLab — đã kiểm chứng bằng test |
+| Tổ hợp máy SSH: `report_to_github: false` + `artifact_target: gitlab` | lắp đúng — trạng thái tắt, artifact vẫn lên GitLab |
 
 ### 13.5. Còn thiếu
 

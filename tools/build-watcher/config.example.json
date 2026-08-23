@@ -27,5 +27,13 @@
 
   "_comment_report_to_github": "true = tu muon credential qua 'git credential fill' (khong can tao token thu cong, xem README). Dat false neu may chua tung git push duoc len repo nay.",
   "report_to_github": true,
-  "publish_artifacts": true
+  "publish_artifacts": true,
+
+  "_comment_artifact_target": "Noi luu file .zip: 'github' = Releases cua repo khach; 'gitlab' = project GitLab cua team (dung khi khach khong cho ghi vao repo ho); 'local' = chi luu tren may. Dau tick tren commit khong bi anh huong - no luon o GitHub.",
+  "artifact_target": "github",
+
+  "_comment_gitlab": "Chi dung khi artifact_target = 'gitlab'. Project ID hien duoi ten project tren trang chinh GitLab. Token: dat bien moi truong BUILD_WATCHER_GITLAB_TOKEN (quyen 'api').",
+  "gitlab_url": "https://gitlab.com",
+  "gitlab_project_id": "",
+  "gitlab_package_name": ""
 }

@@ -120,6 +120,24 @@ class ConfigTest(unittest.TestCase):
         with self.assertRaises(ConfigError):
             Config(**self.base(allowed_committers=[]))
 
+    def test_artifact_target_must_be_known(self):
+        with self.assertRaises(ConfigError):
+            Config(**self.base(artifact_target="dropbox"))
+
+    def test_gitlab_target_requires_a_project_id(self):
+        with self.assertRaises(ConfigError) as ctx:
+            Config(**self.base(artifact_target="gitlab"))
+        self.assertIn("gitlab_project_id", str(ctx.exception))
+
+    def test_gitlab_target_accepted_with_project_id(self):
+        config = Config(
+            **self.base(artifact_target="gitlab", gitlab_project_id="12345")
+        )
+        self.assertEqual(config.artifact_target, "gitlab")
+
+    def test_artifact_target_defaults_to_github(self):
+        self.assertEqual(Config(**self.base()).artifact_target, "github")
+
     def test_wildcard_trusts_any_committer(self):
         config = Config(**self.base(allowed_committers=["*"]))
         self.assertTrue(config.allows("literally-anyone@example.com"))
