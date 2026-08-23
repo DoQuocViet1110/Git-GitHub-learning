@@ -4,6 +4,9 @@
   "repo": "customer-repo",
   "trigger_branch": "build-requests",
   "request_file": "Build_Infor.txt",
+
+  "_comment_trigger_repo_url": "De trong = file yeu cau nam ngay trong repo tren. Neu khach KHONG cho ghi gi vao repo cua ho, dien dia chi 1 repo cua BAN vao day - khi do repo khach chi bi doc, khong bi ghi. Dau tick se gan len commit trong repo cua ban.",
+  "trigger_repo_url": "",
   "poll_interval_seconds": 60,
 
   "root": "C:/build-watcher",

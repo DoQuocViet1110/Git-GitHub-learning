@@ -46,6 +46,14 @@ class Config:
     request_file: str = "Build_Infor.txt"
     poll_interval_seconds: int = 60
 
+    # Where build requests are read from. Empty means the same repository
+    # that gets built -- the simple case. Point it at a repository you
+    # control to make the built repo strictly read-only: useful when a
+    # customer will not accept a branch or a commit from your account,
+    # only clones. Commit statuses then follow the request, landing on
+    # this repo rather than the customer's.
+    trigger_repo_url: str = ""
+
     # where things live on this machine
     root: Path = Path("C:/build-watcher")
     clone_dir: Optional[Path] = None
@@ -147,6 +155,36 @@ class Config:
                 "unknown config keys: {0}".format(", ".join(sorted(unknown)))
             )
         return cls(**data)
+
+    @property
+    def watch_url(self) -> str:
+        """Repository the request file is read from."""
+        return self.trigger_repo_url or self.repo_url
+
+    @property
+    def watches_a_separate_repo(self) -> bool:
+        return bool(self.trigger_repo_url) and self.trigger_repo_url != self.repo_url
+
+    def status_owner_repo(self):
+        """(owner, repo) that commit statuses belong to.
+
+        Statuses attach to the request commit, so they follow the watched
+        repository -- posting them against the built repo would target a
+        sha that does not exist there.
+        """
+        if not self.watches_a_separate_repo:
+            return self.owner, self.repo
+
+        from .git_credentials import parse_owner_repo
+
+        parsed = parse_owner_repo(self.trigger_repo_url)
+        if parsed is None:
+            raise ConfigError(
+                "cannot work out owner/repo from trigger_repo_url {0!r}".format(
+                    self.trigger_repo_url
+                )
+            )
+        return parsed
 
     def warnings(self) -> List[str]:
         """Setup problems that are not fatal but will bite later.

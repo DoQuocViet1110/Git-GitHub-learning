@@ -53,6 +53,25 @@ def is_ssh_url(url: str) -> bool:
     return bool(_SSH_URL.match(url.strip()))
 
 
+_OWNER_REPO = re.compile(
+    r"[:/](?P<owner>[^/:]+)/(?P<repo>[^/]+?)(?:\.git)?/?$"
+)
+
+
+def parse_owner_repo(url: str):
+    """Return (owner, repo) from a git URL, or None if it does not fit.
+
+    Needed once the request file can live in a different repository from
+    the code: a commit status has to be posted against whichever repo
+    holds that commit, which is no longer necessarily the one being
+    built.
+    """
+    match = _OWNER_REPO.search(url.strip())
+    if not match:
+        return None
+    return match.group("owner"), match.group("repo")
+
+
 def fill_credential(
     host: str,
     protocol: str = "https",

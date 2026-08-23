@@ -407,6 +407,32 @@ ví dụ `87654321`. Đó là Project ID.
 Vào project GitLab → menu trái **Deploy** → **Package Registry**. Mỗi lần build
 tạo 1 gói riêng, tên theo branch, bên trong có file `.zip`.
 
+### Nếu khách không cho ghi BẤT CỨ THỨ GÌ vào repo của họ
+
+Kể cả 1 branch chứa file text. Vẫn dùng được: đặt file yêu cầu build ở
+**repo khác do bạn kiểm soát**.
+
+Thêm 1 dòng vào `config.json`:
+```json
+"trigger_repo_url": "https://github.com/tai-khoan-cua-ban/build-requests.git",
+```
+
+Khi đó:
+
+| | Repo khách hàng | Repo của bạn |
+|---|---|---|
+| Chứa code cần build | ✅ | ❌ |
+| Chứa `Build_Infor.txt` | ❌ | ✅ |
+| **Bị ghi vào** | **KHÔNG BAO GIỜ** — chỉ `git clone`/`fetch` | Có |
+| Dấu ✅/❌ gắn ở đâu | ❌ | ✅ (trên commit yêu cầu) |
+
+Cách làm: tạo 1 repo mới (trên tài khoản bạn, hoặc GitLab team), tạo branch
+`build-requests` và file `Build_Infor.txt` trong đó. Mọi yêu cầu build từ giờ
+đẩy vào repo này. Repo khách hàng chỉ bị đọc.
+
+> Đã kiểm chứng thật: sau khi build xong, repo khách không có thêm branch hay
+> commit nào — vẫn nguyên số branch ban đầu.
+
 ### Tổ hợp hay dùng nhất cho máy công ty (SSH)
 
 Máy dùng SSH nên không gắn được dấu tick, nhưng vẫn lưu được file:

@@ -24,21 +24,38 @@ from .watcher import Watcher
 
 
 def build_watcher(config: Config, dry_run: bool = False, token: Optional[str] = None) -> Watcher:
-    repo = GitRepo.ensure_clone(
+    # The repository that gets built. The Watcher never touches this one;
+    # only the pipeline does, and only to read and check out.
+    build_repo = GitRepo.ensure_clone(
         url=config.repo_url,
         path=config.clone_dir,
         workspace=config.workspace_dir,
     )
+    # Usually the same repository, but it can be one you control instead,
+    # leaving the built repo strictly read-only. The Watcher and the
+    # pipeline already used disjoint parts of GitRepo, so they simply take
+    # different clones.
+    watch_repo = (
+        GitRepo.ensure_clone(
+            url=config.watch_url,
+            path=config.clone_dir.parent / "trigger-repo",
+            workspace=config.workspace_dir,
+        )
+        if config.watches_a_separate_repo
+        else build_repo
+    )
+
+    status_owner, status_repo = config.status_owner_repo()
     github = (
         NullGitHubClient("dry-run" if dry_run else "no-github")
         if dry_run or not config.report_to_github
         else GitHubClient(
-            owner=config.owner,
-            repo=config.repo,
+            owner=status_owner,
+            repo=status_repo,
             token=read_token(
                 token,
-                host=host_from_url(config.repo_url),
-                ssh_remote=is_ssh_url(config.repo_url),
+                host=host_from_url(config.watch_url),
+                ssh_remote=is_ssh_url(config.watch_url),
             ),
             status_context=config.status_context,
             api_base=config.api_base,
@@ -46,7 +63,7 @@ def build_watcher(config: Config, dry_run: bool = False, token: Optional[str] = 
         )
     )
     pipeline = BuildPipeline(
-        repo=repo,
+        repo=build_repo,
         github=github,
         publisher=_artifact_publisher(config, github, dry_run),
         builder=Builder(
@@ -58,7 +75,7 @@ def build_watcher(config: Config, dry_run: bool = False, token: Optional[str] = 
         config=config,
     )
     return Watcher(
-        repo=repo,
+        repo=watch_repo,
         state=StateStore(config.state_file),
         pipeline=pipeline,
         config=config,

@@ -12,7 +12,7 @@
 Điền đủ bảng này **trước khi ngồi vào máy build**. Thiếu ô nào là sẽ bị kẹt
 giữa chừng ở đúng ô đó.
 
-### 0.1. Thông tin repo GitHub (nơi chứa code và yêu cầu build)
+### 0.1. Thông tin repo GitHub (nơi chứa code cần build)
 
 | Cần biết | Cách lấy | Điền vào đây |
 |---|---|---|
@@ -21,8 +21,32 @@ giữa chừng ở đúng ô đó.
 | Có quyền tạo branch mới không? | Thử tạo 1 branch test trên web | ☐ Có ☐ Không |
 | Tên branch sẽ chứa yêu cầu build | Tự đặt, mặc định `build-requests` | `______________________` |
 
-> ⚠️ Nếu ô "quyền tạo branch" là **Không** → dừng lại, cách này không dùng
-> được. Xem "Phương án khi bị chặn" ở cuối file.
+### 0.1b. Nếu khách KHÔNG cho ghi gì vào repo của họ
+
+Ô "quyền tạo branch" là **Không**? Vẫn dùng được — đặt file yêu cầu build ở
+**1 repo khác do bạn kiểm soát**. Khi đó repo khách chỉ bị **đọc**, không bị
+ghi bất cứ thứ gì.
+
+| | Repo khách hàng | Repo của bạn |
+|---|---|---|
+| Chứa code cần build | ✅ | ❌ |
+| Chứa `Build_Infor.txt` | ❌ | ✅ |
+| Bị ghi vào | **KHÔNG BAO GIỜ** | Có (chính bạn ghi) |
+| Khai trong config | `repo_url` | `trigger_repo_url` |
+
+Repo của bạn có thể là: repo cá nhân trên GitHub, repo nội bộ của team,
+hoặc bất kỳ repo nào bạn tạo branch được.
+
+| Cần biết | Điền vào đây |
+|---|---|
+| Địa chỉ repo của bạn (chứa yêu cầu build) | `______________________` |
+
+> ⚠️ Repo chứa yêu cầu **phải cùng dịch vụ** với repo code nếu muốn có dấu
+> ✅/❌ (cả hai cùng GitHub, hoặc cùng GitLab). Dấu tick sẽ gắn lên commit
+> **trong repo của bạn**, không phải repo khách.
+>
+> Đã kiểm chứng thật: sau khi build xong, repo khách không hề có thêm branch
+> hay commit nào.
 
 ### 0.2. Thông tin build của dự án (quan trọng nhất, hay bị bỏ sót)
 
@@ -411,6 +435,7 @@ Không cần cài lại. Làm 3 bước:
 | Muốn đổi | Sửa gì trong `config.json` |
 |---|---|
 | Repo khác | `repo_url`, `owner`, `repo` (+ xoá `data\repo` và `data\state.json`) |
+| Khách không cho ghi vào repo họ | Thêm `trigger_repo_url` trỏ vào repo của bạn (mục 0.1b) |
 | Tên branch chứa yêu cầu | `trigger_branch` |
 | Tên file yêu cầu | `request_file` |
 | File script build | `build_script` |
@@ -431,7 +456,7 @@ Không cần cài lại. Làm 3 bước:
 
 | Bị chặn ở đâu | Phương án thay thế |
 |---|---|
-| Không tạo được branch trên repo khách | Cách này không dùng được. Cân nhắc: đặt file yêu cầu ở repo **khác** mà bạn có quyền, rồi build branch của repo khách (cần sửa code — chưa hỗ trợ sẵn) |
+| **Khách không cho ghi gì vào repo họ** (không tạo được branch) | Thêm `trigger_repo_url` trỏ vào repo của bạn — xem mục 0.1b. Repo khách chỉ bị đọc |
 | Khách không cho ghi gì vào repo họ | `artifact_target: gitlab` + `report_to_github: false` |
 | Không tạo được token nào | `report_to_github: false` + `artifact_target: local` — vẫn build, tự lấy file trên máy |
 | Mạng chặn python.org | Tải Python bằng máy khác, chép sang (README mục 9.2) |
